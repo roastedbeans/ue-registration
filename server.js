@@ -9,7 +9,7 @@ const PORT = 3000;
 // Paths to packetrusher folder (sibling folder)
 const PACKETRUSHER_DIR = path.join(__dirname, '..', 'PacketRusher');
 const CONFIG_PATH = path.join(PACKETRUSHER_DIR, 'config', 'config.yml');
-const BINARY_PATH = path.join(PACKETRUSHER_DIR);
+const BINARY_PATH = path.join(PACKETRUSHER_DIR, 'packetrusher');
 
 // Simple HTML interface
 const HTML = `
