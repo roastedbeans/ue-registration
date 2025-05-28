@@ -75,11 +75,16 @@ const HTML = `
     <div class="container">
         <h1>PacketRusher Controller</h1>
         <input type="text" id="imsi" placeholder="IMSI (15 digits)" maxlength="15">
-        <input type="number" id="interval" placeholder="Interval (seconds)" value="60" min="1">
+        <small style="color: #888; font-size: 11px;">MSIN will increment on each run</small>
+        <input type="number" id="interval" placeholder="Interval (seconds)" value="60" min="1" style="margin-top: 10px;">
         <button class="start" onclick="start()">Start</button>
         <button class="stop" onclick="stop()" disabled>Stop</button>
         <div id="logs"></div>
-        <div class="path-info">Config: ../packetrusher/config/config.yaml</div>
+        <div class="path-info">
+            Config: ../PacketRusher/config/config.yml<br>
+            <span style="color: #4CAF50;">PacketRusher will open in a new terminal window</span><br>
+            <span style="color: #888; font-size: 10px;">If no terminal opens, install xterm: sudo apt install xterm</span>
+        </div>
     </div>
     <script>
         let intervalId;
@@ -115,7 +120,6 @@ const HTML = `
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ imsi: currentImsi })
                 });
-
                 const data = await res.json();
                 if (data.success) {
                     log(\`✓ \${data.output}\`);
@@ -167,34 +171,93 @@ const HTML = `
 // Run PacketRusher
 function runPacketRusher() {
 	return new Promise((resolve) => {
-		// Run packetrusher from its directory
-		const process = spawn(BINARY_PATH, ['-config', 'config/config.yaml'], {
-			cwd: PACKETRUSHER_DIR,
+		// Command to run PacketRusher with 'ue' parameter
+		const command = `cd "${PACKETRUSHER_DIR}" && ./packetrusher ue && echo "" && echo "Closing in 5 seconds..." && sleep 5`;
+
+		console.log(`\nExecuting command: ${command}`);
+
+		// Try different methods to open terminal
+		// Method 1: gnome-terminal with bash -c
+		exec(`gnome-terminal -- bash -c '${command}'`, (error) => {
+			if (error) {
+				console.log('gnome-terminal failed, trying xterm...');
+				// Method 2: xterm with -hold and -e
+				exec(`xterm -hold -e bash -c '${command}'`, (error2) => {
+					if (error2) {
+						console.log('xterm failed, trying x-terminal-emulator...');
+						// Method 3: x-terminal-emulator
+						exec(`x-terminal-emulator -e bash -c '${command}'`, (error3) => {
+							if (error3) {
+								// If no terminal works, run directly in background
+								console.log('No terminal emulator worked, running in background...');
+								console.log(`Executing: cd ${PACKETRUSHER_DIR} && ./packetrusher ue`);
+
+								const process = spawn('./packetrusher', ['ue'], {
+									cwd: PACKETRUSHER_DIR,
+									stdio: ['inherit', 'pipe', 'pipe'],
+								});
+
+								let output = '',
+									errorOutput = '';
+
+								process.stdout.on('data', (data) => {
+									const text = data.toString();
+									output += text;
+									console.log('[PacketRusher Output]:', text.trim());
+								});
+
+								process.stderr.on('data', (data) => {
+									const text = data.toString();
+									errorOutput += text;
+									console.error('[PacketRusher Error]:', text.trim());
+								});
+
+								process.on('close', (code) => {
+									console.log(`PacketRusher exited with code ${code}`);
+									resolve({
+										success: code === 0,
+										output: output || 'Running in background - check server console for logs',
+										error: errorOutput || (code !== 0 ? `Exit code: ${code}` : ''),
+									});
+								});
+
+								process.on('error', (err) => {
+									console.error('Failed to start PacketRusher:', err);
+									resolve({ success: false, error: err.message });
+								});
+							} else {
+								// x-terminal-emulator worked
+								setTimeout(() => {
+									resolve({
+										success: true,
+										output: 'PacketRusher started in terminal window',
+										error: '',
+									});
+								}, 500);
+							}
+						});
+					} else {
+						// xterm worked
+						setTimeout(() => {
+							resolve({
+								success: true,
+								output: 'PacketRusher started in xterm window',
+								error: '',
+							});
+						}, 500);
+					}
+				});
+			} else {
+				// gnome-terminal worked
+				setTimeout(() => {
+					resolve({
+						success: true,
+						output: 'PacketRusher started in GNOME Terminal window',
+						error: '',
+					});
+				}, 500);
+			}
 		});
-
-		let output = '',
-			error = '';
-
-		process.stdout.on('data', (data) => (output += data));
-		process.stderr.on('data', (data) => (error += data));
-
-		process.on('close', (code) => {
-			resolve({
-				success: code === 0,
-				output,
-				error: error || (code !== 0 ? `Exit code: ${code}` : ''),
-			});
-		});
-
-		process.on('error', (err) => {
-			resolve({ success: false, error: err.message });
-		});
-
-		// Timeout after 30 seconds
-		setTimeout(() => {
-			process.kill();
-			resolve({ success: false, error: 'Timeout after 30 seconds' });
-		}, 30000);
 	});
 }
 
@@ -216,7 +279,7 @@ const server = http.createServer(async (req, res) => {
 					return;
 				}
 
-				// Check if config.yaml exists
+				// Check if config.yml exists
 				try {
 					await fs.access(CONFIG_PATH);
 				} catch (err) {
@@ -234,19 +297,18 @@ const server = http.createServer(async (req, res) => {
 				const configContent = await fs.readFile(CONFIG_PATH, 'utf8');
 				const config = yaml.load(configContent);
 
-				// Update MSIN (last 10 digits of IMSI)
+				// Update MSIN with the exact value from the incremented IMSI
 				if (!config.ue) {
 					res.writeHead(500, { 'Content-Type': 'application/json' });
 					res.end(
 						JSON.stringify({
 							success: false,
-							error: 'Invalid config.yaml structure - missing "ue" section',
+							error: 'Invalid config.yml structure - missing "ue" section',
 						})
 					);
 					return;
 				}
 
-				// Update MSIN with the exact value from the incremented IMSI
 				config.ue.msin = imsi.slice(-10);
 
 				// Write config back
@@ -272,16 +334,44 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, async () => {
 	console.log(`Server running at http://localhost:${PORT}`);
 	console.log(`PacketRusher directory: ${PACKETRUSHER_DIR}`);
+	console.log('\nChecking terminal emulators...');
+
+	// Check which terminal emulators are available
+	exec('which gnome-terminal', (err) => {
+		if (!err) console.log('✓ gnome-terminal found');
+		else console.log('✗ gnome-terminal not found (install with: sudo apt install gnome-terminal)');
+	});
+
+	exec('which x-terminal-emulator', (err) => {
+		if (!err) console.log('✓ x-terminal-emulator found');
+		else console.log('✗ x-terminal-emulator not found');
+	});
+
+	exec('which xterm', (err) => {
+		if (!err) console.log('✓ xterm found');
+		else console.log('✗ xterm not found (install with: sudo apt install xterm)');
+	});
+
+	exec('which konsole', (err) => {
+		if (!err) console.log('✓ konsole found');
+		else console.log('✗ konsole not found');
+	});
 
 	// Check if packetrusher binary exists
 	try {
 		await fs.access(BINARY_PATH);
-		console.log(`✓ PacketRusher binary found: ${BINARY_PATH}`);
+		console.log(`\n✓ PacketRusher binary found: ${BINARY_PATH}`);
+		// Check if it's executable
+		try {
+			await fs.access(BINARY_PATH, fsConstants.X_OK);
+		} catch (err) {
+			console.log('⚠ Binary may not be executable. Run: chmod +x ../PacketRusher/packetrusher');
+		}
 	} catch (err) {
-		console.error(`✗ PacketRusher binary NOT found at: ${BINARY_PATH}`);
+		console.error(`\n✗ PacketRusher binary NOT found at: ${BINARY_PATH}`);
 	}
 
-	// Check if config.yaml exists
+	// Check if config.yml exists
 	try {
 		await fs.access(CONFIG_PATH);
 		console.log(`✓ Config file found: ${CONFIG_PATH}`);
