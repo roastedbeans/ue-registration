@@ -1,3 +1,4 @@
+// server.js - Simple Node.js server without any framework
 const http = require('http');
 const fs = require('fs').promises;
 const path = require('path');
@@ -7,8 +8,8 @@ const yaml = require('js-yaml');
 const PORT = 3000;
 
 // Paths to packetrusher folder (sibling folder)
-const PACKETRUSHER_DIR = path.join(__dirname, '..', 'PacketRusher');
-const CONFIG_PATH = path.join(PACKETRUSHER_DIR, 'config', 'config.yml');
+const PACKETRUSHER_DIR = path.join(__dirname, '..', 'packetrusher');
+const CONFIG_PATH = path.join(PACKETRUSHER_DIR, 'config', 'config.yaml');
 const BINARY_PATH = path.join(PACKETRUSHER_DIR, 'packetrusher');
 
 // Simple HTML interface
@@ -77,7 +78,7 @@ const HTML = `
         <button class="start" onclick="start()">Start</button>
         <button class="stop" onclick="stop()" disabled>Stop</button>
         <div id="logs"></div>
-        <div class="path-info">Config: ../packetrusher/config.yaml</div>
+        <div class="path-info">Config: ../packetrusher/config/config.yaml</div>
     </div>
     <script>
         let intervalId;
@@ -141,7 +142,7 @@ const HTML = `
 function runPacketRusher() {
 	return new Promise((resolve) => {
 		// Run packetrusher from its directory
-		const process = spawn(BINARY_PATH, ['-config', CONFIG_PATH], {
+		const process = spawn(BINARY_PATH, ['-config', 'config/config.yaml'], {
 			cwd: PACKETRUSHER_DIR,
 		});
 
@@ -261,3 +262,18 @@ server.listen(PORT, async () => {
 		console.error(`✗ Config file NOT found at: ${CONFIG_PATH}`);
 	}
 });
+
+// package.json for standalone version
+/*
+{
+  "name": "packetrusher-gui-simple",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  }
+}
+*/
