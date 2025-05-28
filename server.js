@@ -1,13 +1,20 @@
-// server.js - Simple Node.js server without any framework
-const http = require('http');
+// server.js - Express.js server for PacketRusher GUI
 const fs = require('fs').promises;
 const fsConstants = require('fs').constants;
 const path = require('path');
 const { spawn, exec } = require('child_process');
 const yaml = require('js-yaml');
 const WebSocket = require('ws');
+const express = require('express');
+const cors = require('cors');
 
+const app = express();
 const PORT = 3000;
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+app.use(express.static('public')); // For serving static files if needed
 
 // Paths to packetrusher folder (sibling folder)
 const PACKETRUSHER_DIR = path.join(__dirname, '..', 'PacketRusher');
@@ -58,6 +65,7 @@ const HTML = `
         .start { background: #4CAF50; }
         .stop { background: #f44336; }
         .clear { background: #ff9800; margin-top: 10px; }
+        .get-flight-data { background: #2196F3; margin-top: 10px; }
         button:disabled { opacity: 0.5; }
         .logs-container {
             display: flex;
@@ -115,18 +123,26 @@ const HTML = `
         <h1>PacketRusher Multi-UE Controller</h1>
         <div id="connection-status" class="status disconnected">Connecting to server...</div>
         
-        <input type="text" id="imsi" placeholder="Base IMSI (15 digits)" maxlength="15">
-        <small style="color: #888; font-size: 11px;">MSIN will increment for each UE and continue from last run</small>
+        <div class="input-group">
+            <input type="text" id="mcc" placeholder="MCC (3 digits)" maxlength="3" value="001">
+            <input type="text" id="mnc" placeholder="MNC (2 digits)" maxlength="2" value="01">
+            <input type="text" id="msinBase" placeholder="Base MSIN (10 digits)" maxlength="10">
+        </div>
+        <small style="color: #888; font-size: 11px;">MSIN will increment for each UE. MCC & MNC are preset.</small>
         
         <div class="input-group" style="margin-top: 10px;">
-            <input type="number" id="ueCount" placeholder="Number of UEs" value="1" min="1" max="100">
-            <input type="number" id="interval" placeholder="Interval (seconds)" value="60" min="1">
+            <input type="number" id="ueCountInput" placeholder="Number of UEs" value="1" min="1" max="100" disabled>
+            <input type="number" id="intervalInput" placeholder="Interval (seconds)" value="60" min="1" disabled>
         </div>
+        <small style="color: #888; font-size: 11px;">UE count and interval are now determined by flight data schedule.</small>
         
-        <button class="start" onclick="start()">Start Multi-UE Session</button>
-        <button class="stop" onclick="stop()" disabled>Stop</button>
+        <button class="start" onclick="start()">Start Sessions</button>
+        <button class="stop" onclick="stop()" disabled>Stop Scheduled Sessions</button>
         <button class="clear" onclick="clearLogs()">Clear Logs</button>
-        
+        <button class="get-flight-data" onclick="getFlightData()">Get Flight Data</button>
+
+        <div id="next-session-info" class="status" style="margin-top: 15px; background: #007bff; display: none;"></div>
+
         <div class="logs-container">
             <div class="log-section">
                 <h3>Session Logs</h3>
@@ -145,12 +161,11 @@ const HTML = `
         </div>
     </div>
     <script>
-        let intervalId;
-        let currentMsinBase = null;
-        let baseMsin = null;
+        let scheduledSessions = []; // Will store objects { id, scheduledAt, originalTimeStr, ueCount }
+        let baseMsin = null; // Will store the numeric part of the base MSIN
+        let currentMsinBase = null; // Tracks the current MSIN base for incrementing
         let totalUeCount = 0;
         let sessionCount = 0;
-        let isRunning = false;
         let ws = null;
         
         // WebSocket connection for real-time logs
@@ -197,65 +212,106 @@ const HTML = `
             logs.scrollTop = 0;
         }
         
+        function updateNextSessionDisplay() {
+            const now = new Date();
+            const upcomingSessions = scheduledSessions
+                .filter(s => s.scheduledAt.getTime() > now.getTime())
+                .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime());
+
+            const nextSessionInfoDiv = document.getElementById('next-session-info');
+            if (upcomingSessions.length > 0) {
+                const nextSession = upcomingSessions[0];
+                const timeToNext = Math.round((nextSession.scheduledAt.getTime() - now.getTime()) / 1000);
+                nextSessionInfoDiv.textContent = \`Next session: \${nextSession.originalTimeStr} (\${nextSession.ueCount} UEs) in \${timeToNext}s\`;
+                nextSessionInfoDiv.style.background = '#007bff'; // Blue for scheduled
+                nextSessionInfoDiv.style.display = 'block';
+            } else {
+                const anySessionRunningOrJustFinished = scheduledSessions.some(s => s.isRunning);
+                if (!anySessionRunningOrJustFinished && sessionCount > 0) { // Check if sessions actually ran
+                     nextSessionInfoDiv.textContent = 'All scheduled sessions for today have finished.';
+                     nextSessionInfoDiv.style.background = '#4CAF50'; // Green for completed
+                } else if (sessionCount === 0 && document.querySelector('.start').disabled) { // Started but no valid flights
+                    nextSessionInfoDiv.textContent = 'No future sessions scheduled for today.';
+                    nextSessionInfoDiv.style.background = '#ff9800'; // Orange for warning/notice
+                }
+                else {
+                    nextSessionInfoDiv.style.display = 'none';
+                }
+            }
+        }
+        
         function clearLogs() {
             document.getElementById('logs').innerHTML = '';
             document.getElementById('packetrusher-logs').innerHTML = '';
         }
         
-        async function runMultiUeSession() {
-            if (isRunning) {
-                log('⏳ Previous session still running, skipping this interval...');
-                return;
-            }
-            
-            isRunning = true;
-            document.getElementById('connection-status').textContent = 'Session Running...';
-            document.getElementById('connection-status').className = 'status running';
-            
-            const imsi = document.getElementById('imsi').value;
-            const ueCount = parseInt(document.getElementById('ueCount').value);
-            
-            if (baseMsin === null) {
-                baseMsin = parseInt(imsi.slice(-10));
-                currentMsinBase = baseMsin;
-            }
-            
-            sessionCount++;
-            log(\`🚀 Session #\${sessionCount} - Starting \${ueCount} UEs with multi-ue command (MSIN base: \${currentMsinBase.toString().padStart(10, '0')})\`);
-            
-            const startMsin = currentMsinBase.toString().padStart(10, '0');
-            const endMsin = (currentMsinBase + ueCount - 1).toString().padStart(10, '0');
-            log(\`  📱 UE Range: MSIN \${startMsin} to \${endMsin} (\${ueCount} UEs total)\`);
-            
+        async function getFlightData() {
             try {
-                const result = await runMultiUeCommand(imsi, ueCount, sessionCount);
-                
-                if (result.success) {
-                    log(\`✅ Session #\${sessionCount} completed successfully\`);
-                    totalUeCount += ueCount;
-                    currentMsinBase += ueCount;
-                } else {
-                    log(\`❌ Session #\${sessionCount} failed: \${result.error}\`);
+                const response = await fetch('/api/flight-data');
+                if (!response.ok) {
+                    throw new Error(\`Failed to fetch flight data: \${response.status} \${response.statusText}\`);
                 }
-                
-            } catch (e) {
-                log(\`❌ Session #\${sessionCount} error: \${e.message}\`);
-            } finally {
-                isRunning = false;
-                document.getElementById('connection-status').textContent = 'Connected to server';
-                document.getElementById('connection-status').className = 'status connected';
-                log(\`⏱️ Session #\${sessionCount} finished, ready for next batch\`);
+                const data = await response.json();
+                console.log('Flight data received:', data);
+                return data;
+            } catch (error) {
+                log(\`Error fetching flight data: \${error.message}\`);
+                console.error('Error fetching flight data:', error);
+                return []; // Return empty array on error
             }
         }
         
-        async function runMultiUeCommand(imsi, ueCount, sessionNumber) {
+        async function runMultiUeSession(baseIMSI, ueCountForSession, flightOriginalTimeStr) {
+            document.getElementById('connection-status').textContent = 'Session Running...';
+            document.getElementById('connection-status').className = 'status running';
+            
+            if (baseMsin === null) {
+                const msinPart = baseIMSI.slice(-10);
+                baseMsin = parseInt(msinPart);
+                currentMsinBase = baseMsin;
+                log(\`Warning: baseMsin not initialized by start(), fallback to: \${msinPart}\`)
+            }
+            
+            sessionCount++;
+            log(\`Session #\${sessionCount} - Starting \${ueCountForSession} UEs (IMSI base: \${baseIMSI.slice(0,5)}\${currentMsinBase.toString().padStart(10, '0')})\`);
+            
+            const startMsin = currentMsinBase.toString().padStart(10, '0');
+            const endMsin = (currentMsinBase + ueCountForSession - 1).toString().padStart(10, '0');
+            log(\` UE Range: MSIN \${startMsin} to \${endMsin} (\${ueCountForSession} UEs total for this session)\`);
+            
+            try {
+                const result = await runMultiUeCommand(baseIMSI.slice(0,5) + currentMsinBase.toString().padStart(10, '0'), ueCountForSession, sessionCount);
+                
+                if (result.success) {
+                    log(\`✅ Session #\${sessionCount} completed successfully\`);
+                    totalUeCount += ueCountForSession;
+                    currentMsinBase += ueCountForSession;
+                } else {
+                    log(\`Session #\${sessionCount} failed: \${result.error}\`);
+                }
+                
+            } catch (e) {
+                log(\`Session #\${sessionCount} error: \${e.message}\`);
+            } finally {
+                // Reset status after each session; might be quickly overwritten if many sessions
+                const sessionToMarkDone = scheduledSessions.find(s => s.ueCount === ueCountForSession && s.originalTimeStr === flightOriginalTimeStr);
+                if(sessionToMarkDone) sessionToMarkDone.isRunning = false;
+
+                document.getElementById('connection-status').textContent = 'Connected to server';
+                document.getElementById('connection-status').className = 'status connected';
+                log(\`⏱️ Session #\${sessionCount} finished. Total UEs so far: \${totalUeCount}\`);
+                updateNextSessionDisplay(); // Update display for the *next* session
+            }
+        }
+        
+        async function runMultiUeCommand(fullImsiForSession, ueCountForThisSession, sessionNumber) {
             try {
                 const res = await fetch('/run', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
-                        imsi: imsi, 
-                        ueCount: ueCount,
+                        imsi: fullImsiForSession,
+                        ueCount: ueCountForThisSession,
                         sessionNumber: sessionNumber 
                     })
                 });
@@ -266,47 +322,124 @@ const HTML = `
             }
         }
         
-        function start() {
-            const imsi = document.getElementById('imsi').value;
-            const ueCount = document.getElementById('ueCount').value;
-            const interval = document.getElementById('interval').value;
-            
-            if (!imsi || imsi.length !== 15) {
-                alert('Enter valid 15-digit IMSI');
+        async function start() {
+            // Clear any existing session timeouts
+            scheduledSessions.forEach(session => clearTimeout(session.id));
+            scheduledSessions = [];
+
+            const mcc = document.getElementById('mcc').value;
+            const mnc = document.getElementById('mnc').value;
+            const msinBaseInput = document.getElementById('msinBase').value;
+
+            if (!mcc || mcc.length !== 3) {
+                alert('Enter a valid 3-character MCC.');
                 return;
             }
-            
-            if (!ueCount || ueCount < 1) {
-                alert('Enter valid number of UEs (1 or more)');
+            if (!mnc || mnc.length !== 2) {
+                alert('Enter a valid 2-character MNC.');
                 return;
             }
-            
-            isRunning = false;
-            
+            if (!msinBaseInput || msinBaseInput.length !== 10) {
+                alert('Enter a valid 10-digit Base MSIN.');
+                return;
+            }
+
+            const baseIMSI = mcc + mnc + msinBaseInput;
+            baseMsin = parseInt(msinBaseInput);
+            currentMsinBase = baseMsin;
+            sessionCount = 0;
+            totalUeCount = 0;
+
             document.querySelector('.start').disabled = true;
             document.querySelector('.stop').disabled = false;
-            document.getElementById('imsi').disabled = true;
-            document.getElementById('ueCount').disabled = true;
-            document.getElementById('interval').disabled = true;
+            document.getElementById('mcc').disabled = true;
+            document.getElementById('mnc').disabled = true;
+            document.getElementById('msinBase').disabled = true;
+
+            log(\`Fetching flight data to schedule PacketRusher sessions with base IMSI prefix: \${mcc}\${mnc} and MSIN starting from \${msinBaseInput}\`);
             
-            log(\`🎯 Started multi-UE session: \${ueCount} UEs every \${interval}s using 'multi-ue -n \${ueCount}' command\`);
-            log(\`📍 Next MSIN base: \${currentMsinBase ? currentMsinBase.toString().padStart(10, '0') : imsi.slice(-10)}\`);
-            
-            runMultiUeSession();
-            intervalId = setInterval(runMultiUeSession, interval * 1000);
+            const flightData = await getFlightData();
+
+            if (!flightData || flightData.length === 0) {
+                log('No flight data available or error fetching. Cannot schedule sessions.');
+                stop();
+                return;
+            }
+
+            log(\`Found \${flightData.length} flight entries. Scheduling sessions...\`);
+
+            const now = new Date();
+            let scheduledCount = 0;
+
+            flightData.forEach((flight, index) => {
+                const [timeStr, period] = flight.time.split(' ');
+                let [hours, minutes, seconds] = timeStr.split(':').map(Number);
+
+                if (period === 'PM' && hours !== 12) {
+                    hours += 12;
+                } else if (period === 'AM' && hours === 12) {
+                    hours = 0;
+                }
+
+                const flightTimeToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, seconds);
+                const delay = flightTimeToday.getTime() - now.getTime();
+
+                if (delay > 0) {
+                    const currentFlightData = { ...flight }; // Capture current flight data for the timeout
+
+                    const timeoutId = setTimeout(() => {
+                        const nextSessionInfoDiv = document.getElementById('next-session-info');
+                        nextSessionInfoDiv.textContent = \`Running session for: \${currentFlightData.time} (\${currentFlightData.foreignPassengers} UEs)\`;
+                        nextSessionInfoDiv.style.background = '#f57c00'; // Orange for running
+                        nextSessionInfoDiv.style.display = 'block';
+                        
+                        const sessionMarker = scheduledSessions.find(s => s.id === timeoutId);
+                        if(sessionMarker) sessionMarker.isRunning = true;
+
+                        // Pass the original baseIMSI (MCC+MNC+initial MSIN) 
+                        // and the specific ueCount (foreignPassengers) for this flight
+                        // Also pass the original flight time string for logging/identification if needed
+                        runMultiUeSession(baseIMSI, currentFlightData.foreignPassengers, currentFlightData.time);
+                    }, delay);
+                    scheduledSessions.push({ 
+                        id: timeoutId, 
+                        scheduledAt: flightTimeToday, 
+                        originalTimeStr: flight.time, 
+                        ueCount: flight.foreignPassengers,
+                        isRunning: false
+                    });
+                    scheduledCount++;
+                } else {
+                    log(\`Skipping past flight time: \${flight.time}\`);
+                }
+            });
+
+            if (scheduledCount > 0) {
+                log(\`Successfully scheduled \${scheduledCount} future sessions based on flight data.\`);
+                log(\`Base MSIN for the first session will be \${currentMsinBase.toString().padStart(10, '0')}. It will increment for subsequent UEs/sessions.\`);
+            } else {
+                log('No future flight times found to schedule. All flight times may be in the past for today.');
+                stop();
+            }
+            updateNextSessionDisplay(); // Initial display of the next session
         }
         
         function stop() {
-            clearInterval(intervalId);
-            isRunning = false;
+            scheduledSessions.forEach(session => clearTimeout(session.id));
+            scheduledSessions = [];
+            
             document.querySelector('.start').disabled = false;
             document.querySelector('.stop').disabled = true;
-            document.getElementById('imsi').disabled = false;
-            document.getElementById('ueCount').disabled = false;
-            document.getElementById('interval').disabled = false;
+            document.getElementById('mcc').disabled = false;
+            document.getElementById('mnc').disabled = false;
+            document.getElementById('msinBase').disabled = false;
+
             document.getElementById('connection-status').textContent = 'Connected to server';
             document.getElementById('connection-status').className = 'status connected';
-            log(\`🛑 Stopped after \${sessionCount} sessions (\${totalUeCount} total UEs)\`);
+            log(\`Stopped all scheduled sessions. \${sessionCount} sessions ran, \${totalUeCount} total UEs processed.\`);
+            baseMsin = null;
+            currentMsinBase = null;
+            updateNextSessionDisplay(); // Clear the next session display
         }
         
         // Connect to WebSocket when page loads
@@ -432,118 +565,144 @@ function runPacketRusher(sessionNumber = 1, ueCount = 1) {
 	});
 }
 
-// HTTP Server
-const server = http.createServer(async (req, res) => {
-	if (req.method === 'GET' && req.url === '/') {
-		res.writeHead(200, { 'Content-Type': 'text/html' });
-		res.end(HTML);
-	} else if (req.method === 'POST' && req.url === '/run') {
-		let body = '';
-		req.on('data', (chunk) => (body += chunk));
-		req.on('end', async () => {
-			try {
-				const { imsi, ueCount, sessionNumber } = JSON.parse(body);
+// Express Routes
 
-				if (!imsi || imsi.length !== 15) {
-					res.writeHead(400, { 'Content-Type': 'application/json' });
-					res.end(JSON.stringify({ success: false, error: 'Invalid IMSI' }));
-					return;
-				}
+// Serve the main HTML page
+app.get('/', (req, res) => {
+	res.send(HTML);
+});
 
-				if (!ueCount || ueCount < 1) {
-					res.writeHead(400, { 'Content-Type': 'application/json' });
-					res.end(JSON.stringify({ success: false, error: 'Invalid UE count' }));
-					return;
-				}
+// Handle PacketRusher execution
+app.post('/run', async (req, res) => {
+	try {
+		const { imsi, ueCount, sessionNumber } = req.body;
 
-				// Check if config.yml exists
-				try {
-					await fs.access(CONFIG_PATH);
-				} catch (err) {
-					res.writeHead(500, { 'Content-Type': 'application/json' });
-					res.end(
-						JSON.stringify({
-							success: false,
-							error: `Config not found at: ${CONFIG_PATH}`,
-						})
-					);
-					return;
-				}
+		if (!imsi || imsi.length !== 15) {
+			return res.status(400).json({ success: false, error: 'Invalid IMSI' });
+		}
 
-				// Read config
-				const configContent = await fs.readFile(CONFIG_PATH, 'utf8');
-				const config = yaml.load(configContent);
+		if (!ueCount || ueCount < 1) {
+			return res.status(400).json({ success: false, error: 'Invalid UE count' });
+		}
 
-				// Update MSIN with the base value from the IMSI for multi-UE session
-				if (!config.ue) {
-					res.writeHead(500, { 'Content-Type': 'application/json' });
-					res.end(
-						JSON.stringify({
-							success: false,
-							error: 'Invalid config.yml structure - missing "ue" section',
-						})
-					);
-					return;
-				}
+		// Check if config.yml exists
+		try {
+			await fs.access(CONFIG_PATH);
+		} catch (err) {
+			return res.status(500).json({
+				success: false,
+				error: `Config not found at: ${CONFIG_PATH}`,
+			});
+		}
 
-				// Set the base MSIN - PacketRusher will increment from this base for each UE
-				config.ue.msin = imsi.slice(-10);
+		// Read config
+		const configContent = await fs.readFile(CONFIG_PATH, 'utf8');
+		const config = yaml.load(configContent);
 
-				// Write config back
-				await fs.writeFile(CONFIG_PATH, yaml.dump(config), 'utf8');
+		// Update MSIN with the base value from the IMSI for multi-UE session
+		if (!config.ue) {
+			return res.status(500).json({
+				success: false,
+				error: 'Invalid config.yml structure - missing "ue" section',
+			});
+		}
 
-				console.log(`\nSession #${sessionNumber || 1}: Running ${ueCount} UEs with base MSIN: ${imsi.slice(-10)}`);
+		// Set the base MSIN - PacketRusher will increment from this base for each UE
+		config.ue.msin = imsi.slice(-10);
 
-				// Run PacketRusher with multi-ue command
-				const result = await runPacketRusher(sessionNumber || 1, ueCount);
+		// Write config back
+		await fs.writeFile(CONFIG_PATH, yaml.dump(config), 'utf8');
 
-				res.writeHead(200, { 'Content-Type': 'application/json' });
-				res.end(JSON.stringify(result));
-			} catch (error) {
-				res.writeHead(500, { 'Content-Type': 'application/json' });
-				res.end(JSON.stringify({ success: false, error: error.message }));
-			}
-		});
-	} else {
-		res.writeHead(404);
-		res.end('Not found');
+		console.log(`\nSession #${sessionNumber || 1}: Running ${ueCount} UEs with base MSIN: ${imsi.slice(-10)}`);
+
+		// Run PacketRusher with multi-ue command
+		const result = await runPacketRusher(sessionNumber || 1, ueCount);
+
+		res.json(result);
+	} catch (error) {
+		res.status(500).json({ success: false, error: error.message });
 	}
 });
 
-// WebSocket Server
-const wss = new WebSocket.Server({ server });
+// Health check endpoint
+app.get('/health', (req, res) => {
+	res.json({ status: 'OK', timestamp: new Date().toISOString() });
+});
 
-wss.on('connection', (ws) => {
-	console.log('New WebSocket client connected');
-	wsClients.push(ws);
+// Flight data endpoint
+app.get('/api/flight-data', async (req, res) => {
+	try {
+		const { airport = 'RKSI', accessToken } = req.query;
 
-	// Send welcome message
-	ws.send(
-		JSON.stringify({
-			type: 'packetrusher-log',
-			message: '🔗 Connected to PacketRusher Controller',
-			level: 'info',
-			timestamp: new Date().toISOString(),
-		})
-	);
+		// Calculate timestamps for last week same day (full 24 hours)
+		const now = new Date();
+		const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); // 7 days ago
 
-	ws.on('close', () => {
-		console.log('WebSocket client disconnected');
-		wsClients = wsClients.filter((client) => client !== ws);
-	});
+		// Set to beginning of that day (00:00:00)
+		const beginDate = new Date(lastWeek);
+		beginDate.setHours(0, 0, 0, 0);
 
-	ws.on('error', (error) => {
-		console.error('WebSocket error:', error);
-		wsClients = wsClients.filter((client) => client !== ws);
-	});
+		// Set to end of that day (23:59:59)
+		const endDate = new Date(lastWeek);
+		endDate.setHours(23, 59, 59, 999);
+
+		const beginTimestamp = Math.floor(beginDate.getTime() / 1000);
+		const endTimestamp = Math.floor(endDate.getTime() / 1000);
+
+		const estimatedPassengers = 174; // Passengers per arrival
+
+		console.log('Fetching flight data from OpenSky Network...');
+		console.log('Begin timestamp:', beginTimestamp);
+		console.log('End timestamp:', endTimestamp);
+
+		// Use dynamic import for ES module (server-side only)
+		const flightModule = await import('./flight.mjs');
+
+		const arrivalTimestamps = flightModule.flight.map((data) => data.firstSeen || data.lastSeen);
+		const today = new Date();
+
+		// From the timestamps, I should be able to get the time value, HH:MM:SS in KST timezone
+		const arrivalTimes = arrivalTimestamps
+			.filter((timestamp) => {
+				const date = new Date(timestamp * 1000);
+				return date.getDay() === today.getDay();
+			})
+			.sort((a, b) => a - b)
+			.map((timestamp) => {
+				const date = new Date(timestamp * 1000);
+				// Estimated foreigners are 40% - 60% of total passengers, it should be random
+				const estimatedForeigners = Math.floor(
+					estimatedPassengers * 0.4 + Math.random() * (estimatedPassengers * 0.6 - estimatedPassengers * 0.4)
+				);
+
+				const data = {
+					time: date.toLocaleTimeString('en-US', { timeZone: 'Asia/Seoul' }),
+					foreignPassengers: estimatedForeigners,
+				};
+
+				return data;
+			});
+
+		console.log(today.getDay());
+
+		console.log(arrivalTimes);
+
+		res.json(arrivalTimes);
+	} catch (error) {
+		console.error('Flight data endpoint error:', error);
+		res.status(500).json({
+			success: false,
+			error: error.message,
+			data: [],
+			length: 0,
+		});
+	}
 });
 
 // Start server
-server.listen(PORT, async () => {
+const server = app.listen(PORT, async () => {
 	console.log(`Server running at http://localhost:${PORT}`);
 	console.log(`PacketRusher directory: ${PACKETRUSHER_DIR}`);
-	console.log('\n🚀 PacketRusher Controller started with direct execution mode');
-	console.log('📊 Real-time logs will be streamed to the web interface');
 
 	// Check if packetrusher binary exists
 	try {
@@ -573,18 +732,30 @@ server.listen(PORT, async () => {
 	console.log('\n📱 Open http://localhost:3000 in your browser to start using the controller');
 });
 
-// package.json for standalone version
-/*
-{
-  "name": "packetrusher-gui-simple",
-  "version": "1.0.0",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "dependencies": {
-    "js-yaml": "^4.1.0",
-    "ws": "^8.14.0"
-  }
-}
-*/
+// WebSocket Server
+const wss = new WebSocket.Server({ server });
+
+wss.on('connection', (ws) => {
+	console.log('New WebSocket client connected');
+	wsClients.push(ws);
+
+	// Send welcome message
+	ws.send(
+		JSON.stringify({
+			type: 'packetrusher-log',
+			message: '🔗 Connected to PacketRusher Controller',
+			level: 'info',
+			timestamp: new Date().toISOString(),
+		})
+	);
+
+	ws.on('close', () => {
+		console.log('WebSocket client disconnected');
+		wsClients = wsClients.filter((client) => client !== ws);
+	});
+
+	ws.on('error', (error) => {
+		console.error('WebSocket error:', error);
+		wsClients = wsClients.filter((client) => client !== ws);
+	});
+});
