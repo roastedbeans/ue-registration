@@ -130,30 +130,25 @@ const HTML = `
             }
             
             sessionCount++;
-            log(\`🚀 Session #\${sessionCount} - Starting \${ueCount} UEs (MSIN base: \${currentMsinBase.toString().padStart(10, '0')})\`);
+            log(\`🚀 Session #\${sessionCount} - Starting \${ueCount} UEs with multi-ue command (MSIN base: \${currentMsinBase.toString().padStart(10, '0')})\`);
             
-            // Run multiple UEs in parallel
-            const promises = [];
-            for (let i = 0; i < ueCount; i++) {
-                const ueNumber = totalUeCount + i + 1;
-                const currentMsin = (currentMsinBase + i).toString().padStart(10, '0');
-                const currentImsi = imsi.slice(0, 5) + currentMsin;
-                
-                log(\`  📱 UE #\${ueNumber} - IMSI: \${currentImsi} (MSIN: \${currentMsin})\`);
-                
-                promises.push(runSingleUe(currentImsi, ueNumber));
-            }
+            // Calculate MSIN range for this session
+            const startMsin = currentMsinBase.toString().padStart(10, '0');
+            const endMsin = (currentMsinBase + ueCount - 1).toString().padStart(10, '0');
+            log(\`  📱 UE Range: MSIN \${startMsin} to \${endMsin} (\${ueCount} UEs total)\`);
             
             try {
-                const results = await Promise.all(promises);
-                const successCount = results.filter(r => r.success).length;
-                const failCount = results.length - successCount;
+                const result = await runMultiUeCommand(imsi, ueCount, sessionCount);
                 
-                log(\`✅ Session #\${sessionCount} completed: \${successCount} success, \${failCount} failed\`);
-                
-                // Update counters for next session
-                totalUeCount += ueCount;
-                currentMsinBase += ueCount;
+                if (result.success) {
+                    log(\`✅ Session #\${sessionCount} completed successfully: \${result.output}\`);
+                    
+                    // Update counters for next session
+                    totalUeCount += ueCount;
+                    currentMsinBase += ueCount;
+                } else {
+                    log(\`❌ Session #\${sessionCount} failed: \${result.error}\`);
+                }
                 
             } catch (e) {
                 log(\`❌ Session #\${sessionCount} error: \${e.message}\`);
@@ -163,24 +158,21 @@ const HTML = `
             }
         }
         
-        async function runSingleUe(imsi, ueNumber) {
+        async function runMultiUeCommand(imsi, ueCount, sessionNumber) {
             try {
                 const res = await fetch('/run', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ imsi: imsi, ueNumber: ueNumber })
+                    body: JSON.stringify({ 
+                        imsi: imsi, 
+                        ueCount: ueCount,
+                        sessionNumber: sessionNumber 
+                    })
                 });
                 const data = await res.json();
-                if (data.success) {
-                    log(\`    ✓ UE #\${ueNumber}: \${data.output}\`);
-                    return { success: true };
-                } else {
-                    log(\`    ✗ UE #\${ueNumber}: \${data.error}\`);
-                    return { success: false };
-                }
+                return data;
             } catch (e) {
-                log(\`    ✗ UE #\${ueNumber}: \${e.message}\`);
-                return { success: false };
+                return { success: false, error: e.message };
             }
         }
         
@@ -208,7 +200,7 @@ const HTML = `
             document.getElementById('ueCount').disabled = true;
             document.getElementById('interval').disabled = true;
             
-            log(\`🎯 Started multi-UE session: \${ueCount} UEs every \${interval}s (waiting for each batch to complete)\`);
+            log(\`🎯 Started multi-UE session: \${ueCount} UEs every \${interval}s using 'multi-ue -n \${ueCount}' command\`);
             log(\`📍 Next MSIN base: \${currentMsinBase ? currentMsinBase.toString().padStart(10, '0') : imsi.slice(-10)}\`);
             
             runMultiUeSession();
@@ -231,110 +223,117 @@ const HTML = `
 `;
 
 // Run PacketRusher
-function runPacketRusher(ueNumber = 1) {
+function runPacketRusher(ueNumber = 1, ueCount = 1) {
 	return new Promise((resolve) => {
-		// Command that runs PacketRusher and forcefully closes terminal after 10 seconds
-		// This starts PacketRusher, captures its PID, waits 10 seconds, then kills it if still running
-		const command = `cd "${PACKETRUSHER_DIR}" && (./packetrusher ue & PID=$!; echo "UE #${ueNumber} PacketRusher started (PID: $PID)"; echo "Terminal will close in 10 seconds..."; sleep 10; kill $PID 2>/dev/null && echo "UE #${ueNumber} Process stopped" || echo "UE #${ueNumber} Process already finished")`;
+		// Command that runs PacketRusher multi-ue and forcefully closes terminal after 10 seconds
+		const command = `cd "${PACKETRUSHER_DIR}" && (./packetrusher multi-ue -n ${ueCount} & PID=$!; echo "Session #${ueNumber} PacketRusher multi-ue started with ${ueCount} UEs (PID: $PID)"; echo "Terminal will close in 10 seconds..."; sleep 10; kill $PID 2>/dev/null && echo "Session #${ueNumber} Process stopped" || echo "Session #${ueNumber} Process already finished")`;
 
-		console.log(`\nExecuting command for UE #${ueNumber}: ${command}`);
+		console.log(`\nExecuting command for Session #${ueNumber}: ${command}`);
 
 		// Try different methods to open terminal
 		// Method 1: gnome-terminal with bash -c
-		exec(`gnome-terminal --title="PacketRusher UE #${ueNumber}" -- bash -c '${command}'`, (error) => {
-			if (error) {
-				console.log(`gnome-terminal failed for UE #${ueNumber}, trying xterm...`);
-				// Method 2: xterm (without -hold so it closes automatically)
-				exec(`xterm -title "PacketRusher UE #${ueNumber}" -e bash -c '${command}'`, (error2) => {
-					if (error2) {
-						console.log(`xterm failed for UE #${ueNumber}, trying x-terminal-emulator...`);
-						// Method 3: x-terminal-emulator
-						exec(`x-terminal-emulator -e bash -c '${command}'`, (error3) => {
-							if (error3) {
-								// If no terminal works, run directly in background
-								console.log(`No terminal emulator worked for UE #${ueNumber}, running in background...`);
-								console.log(`Executing: cd ${PACKETRUSHER_DIR} && ./packetrusher ue (with 10s timeout)`);
+		exec(
+			`gnome-terminal --title="PacketRusher Session #${ueNumber} (${ueCount} UEs)" -- bash -c '${command}'`,
+			(error) => {
+				if (error) {
+					console.log(`gnome-terminal failed for Session #${ueNumber}, trying xterm...`);
+					// Method 2: xterm (without -hold so it closes automatically)
+					exec(
+						`xterm -title "PacketRusher Session #${ueNumber} (${ueCount} UEs)" -e bash -c '${command}'`,
+						(error2) => {
+							if (error2) {
+								console.log(`xterm failed for Session #${ueNumber}, trying x-terminal-emulator...`);
+								// Method 3: x-terminal-emulator
+								exec(`x-terminal-emulator -e bash -c '${command}'`, (error3) => {
+									if (error3) {
+										// If no terminal works, run directly in background
+										console.log(`No terminal emulator worked for Session #${ueNumber}, running in background...`);
+										console.log(
+											`Executing: cd ${PACKETRUSHER_DIR} && ./packetrusher multi-ue -n ${ueCount} (with 10s timeout)`
+										);
 
-								const process = spawn('./packetrusher', ['ue'], {
-									cwd: PACKETRUSHER_DIR,
-									stdio: ['inherit', 'pipe', 'pipe'],
-								});
+										const process = spawn('./packetrusher', ['multi-ue', '-n', ueCount.toString()], {
+											cwd: PACKETRUSHER_DIR,
+											stdio: ['inherit', 'pipe', 'pipe'],
+										});
 
-								let output = '',
-									errorOutput = '';
-								let processKilled = false;
+										let output = '',
+											errorOutput = '';
+										let processKilled = false;
 
-								// Kill process after 10 seconds
-								const killTimer = setTimeout(() => {
-									if (!processKilled) {
-										processKilled = true;
-										process.kill('SIGTERM');
-										console.log(`UE #${ueNumber} PacketRusher process terminated after 10 seconds`);
+										// Kill process after 10 seconds
+										const killTimer = setTimeout(() => {
+											if (!processKilled) {
+												processKilled = true;
+												process.kill('SIGTERM');
+												console.log(`Session #${ueNumber} PacketRusher process terminated after 10 seconds`);
+											}
+										}, 10000);
+
+										process.stdout.on('data', (data) => {
+											const text = data.toString();
+											output += text;
+											console.log(`[Session #${ueNumber} PacketRusher Output]:`, text.trim());
+										});
+
+										process.stderr.on('data', (data) => {
+											const text = data.toString();
+											errorOutput += text;
+											console.error(`[Session #${ueNumber} PacketRusher Error]:`, text.trim());
+										});
+
+										process.on('close', (code) => {
+											clearTimeout(killTimer);
+											console.log(`Session #${ueNumber} PacketRusher exited with code ${code}`);
+											resolve({
+												success: true,
+												output: processKilled
+													? `Session #${ueNumber} Process stopped after 10 seconds (${ueCount} UEs)`
+													: `Session #${ueNumber} Process completed within 10 seconds (${ueCount} UEs)`,
+												error: errorOutput || '',
+											});
+										});
+
+										process.on('error', (err) => {
+											clearTimeout(killTimer);
+											console.error(`Failed to start Session #${ueNumber} PacketRusher:`, err);
+											resolve({ success: false, error: err.message });
+										});
+									} else {
+										// x-terminal-emulator worked
+										setTimeout(() => {
+											resolve({
+												success: true,
+												output: `Session #${ueNumber} PacketRusher started in terminal (${ueCount} UEs, auto-closes after 10s)`,
+												error: '',
+											});
+										}, 500);
 									}
-								}, 10000);
-
-								process.stdout.on('data', (data) => {
-									const text = data.toString();
-									output += text;
-									console.log(`[UE #${ueNumber} PacketRusher Output]:`, text.trim());
-								});
-
-								process.stderr.on('data', (data) => {
-									const text = data.toString();
-									errorOutput += text;
-									console.error(`[UE #${ueNumber} PacketRusher Error]:`, text.trim());
-								});
-
-								process.on('close', (code) => {
-									clearTimeout(killTimer);
-									console.log(`UE #${ueNumber} PacketRusher exited with code ${code}`);
-									resolve({
-										success: true,
-										output: processKilled
-											? `UE #${ueNumber} Process stopped after 10 seconds`
-											: `UE #${ueNumber} Process completed within 10 seconds`,
-										error: errorOutput || '',
-									});
-								});
-
-								process.on('error', (err) => {
-									clearTimeout(killTimer);
-									console.error(`Failed to start UE #${ueNumber} PacketRusher:`, err);
-									resolve({ success: false, error: err.message });
 								});
 							} else {
-								// x-terminal-emulator worked
+								// xterm worked
 								setTimeout(() => {
 									resolve({
 										success: true,
-										output: `UE #${ueNumber} PacketRusher started in terminal (auto-closes after 10s)`,
+										output: `Session #${ueNumber} PacketRusher started in xterm (${ueCount} UEs, auto-closes after 10s)`,
 										error: '',
 									});
 								}, 500);
 							}
+						}
+					);
+				} else {
+					// gnome-terminal worked
+					setTimeout(() => {
+						resolve({
+							success: true,
+							output: `Session #${ueNumber} PacketRusher started in GNOME Terminal (${ueCount} UEs, auto-closes after 10s)`,
+							error: '',
 						});
-					} else {
-						// xterm worked
-						setTimeout(() => {
-							resolve({
-								success: true,
-								output: `UE #${ueNumber} PacketRusher started in xterm (auto-closes after 10s)`,
-								error: '',
-							});
-						}, 500);
-					}
-				});
-			} else {
-				// gnome-terminal worked
-				setTimeout(() => {
-					resolve({
-						success: true,
-						output: `UE #${ueNumber} PacketRusher started in GNOME Terminal (auto-closes after 10s)`,
-						error: '',
-					});
-				}, 500);
+					}, 500);
+				}
 			}
-		});
+		);
 	});
 }
 
@@ -348,11 +347,17 @@ const server = http.createServer(async (req, res) => {
 		req.on('data', (chunk) => (body += chunk));
 		req.on('end', async () => {
 			try {
-				const { imsi, ueNumber } = JSON.parse(body);
+				const { imsi, ueCount, sessionNumber } = JSON.parse(body);
 
 				if (!imsi || imsi.length !== 15) {
 					res.writeHead(400, { 'Content-Type': 'application/json' });
 					res.end(JSON.stringify({ success: false, error: 'Invalid IMSI' }));
+					return;
+				}
+
+				if (!ueCount || ueCount < 1) {
+					res.writeHead(400, { 'Content-Type': 'application/json' });
+					res.end(JSON.stringify({ success: false, error: 'Invalid UE count' }));
 					return;
 				}
 
@@ -374,7 +379,7 @@ const server = http.createServer(async (req, res) => {
 				const configContent = await fs.readFile(CONFIG_PATH, 'utf8');
 				const config = yaml.load(configContent);
 
-				// Update MSIN with the exact value from the incremented IMSI
+				// Update MSIN with the base value from the IMSI for multi-UE session
 				if (!config.ue) {
 					res.writeHead(500, { 'Content-Type': 'application/json' });
 					res.end(
@@ -386,13 +391,16 @@ const server = http.createServer(async (req, res) => {
 					return;
 				}
 
+				// Set the base MSIN - PacketRusher will increment from this base for each UE
 				config.ue.msin = imsi.slice(-10);
 
 				// Write config back
 				await fs.writeFile(CONFIG_PATH, yaml.dump(config), 'utf8');
 
-				// Run PacketRusher
-				const result = await runPacketRusher(ueNumber);
+				console.log(`\nSession #${sessionNumber || 1}: Running ${ueCount} UEs with base MSIN: ${imsi.slice(-10)}`);
+
+				// Run PacketRusher with multi-ue command
+				const result = await runPacketRusher(sessionNumber || 1, ueCount);
 
 				res.writeHead(200, { 'Content-Type': 'application/json' });
 				res.end(JSON.stringify(result));
