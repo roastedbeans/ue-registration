@@ -1,6 +1,7 @@
 // server.js - Simple Node.js server without any framework
 const http = require('http');
 const fs = require('fs').promises;
+const fsConstants = require('fs').constants;
 const path = require('path');
 const { spawn } = require('child_process');
 const yaml = require('js-yaml');
@@ -115,7 +116,11 @@ const HTML = `
                     body: JSON.stringify({ imsi: currentImsi })
                 });
                 const data = await res.json();
-                log(data.success ? 'Success' : \`Error: \${data.error}\`);
+                if (data.success) {
+                    log('✓ Terminal opened - Check the new window for PacketRusher logs');
+                } else {
+                    log(\`Error: \${data.error}\`);
+                }
             } catch (e) {
                 log(\`Error: \${e.message}\`);
             }
