@@ -3,7 +3,7 @@ const http = require('http');
 const fs = require('fs').promises;
 const fsConstants = require('fs').constants;
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, exec } = require('child_process');
 const yaml = require('js-yaml');
 
 const PORT = 3000;
@@ -115,9 +115,10 @@ const HTML = `
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ imsi: currentImsi })
                 });
+
                 const data = await res.json();
                 if (data.success) {
-                    log('✓ Terminal opened - Check the new window for PacketRusher logs');
+                    log(\`✓ \${data.output}\`);
                 } else {
                     log(\`Error: \${data.error}\`);
                 }
