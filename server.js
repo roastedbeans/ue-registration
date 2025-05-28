@@ -130,14 +130,22 @@ const HTML = `
         </div>
         <small style="color: #888; font-size: 11px;">MSIN will increment for each UE. MCC & MNC are preset.</small>
         
-        <div class="input-group" style="margin-top: 10px;">
-            <input type="number" id="ueCountInput" placeholder="Number of UEs" value="1" min="1" max="100" disabled>
-            <input type="number" id="intervalInput" placeholder="Interval (seconds)" value="60" min="1" disabled>
+        <div style="margin-top: 15px; margin-bottom: 15px;">
+            <label style="margin-right: 10px;">
+                <input type="radio" name="runMode" value="scheduled" checked onchange="handleModeChange(this.value)"> Scheduled (Flight Data)
+            </label>
+            <label>
+                <input type="radio" name="runMode" value="runNow" onchange="handleModeChange(this.value)"> Run Now
+            </label>
         </div>
-        <small style="color: #888; font-size: 11px;">UE count and interval are now determined by flight data schedule.</small>
+
+        <div class="input-group" style="margin-top: 10px;">
+            <input type="number" id="ueCountInput" placeholder="Number of UEs (for Run Now)" value="1" min="1" max="100" disabled>
+        </div>
+        <small id="ueCountInputLabel" style="color: #888; font-size: 11px; display: block;">UE count for "Run Now" mode. For "Scheduled", it's from flight data.</small>
         
         <button class="start" onclick="start()">Start Sessions</button>
-        <button class="stop" onclick="stop()" disabled>Stop Scheduled Sessions</button>
+        <button class="stop" onclick="stop()" disabled>Stop / Reset</button>
         <button class="clear" onclick="clearLogs()">Clear Logs</button>
         <button class="get-flight-data" onclick="getFlightData()">Get Flight Data</button>
 
@@ -161,12 +169,33 @@ const HTML = `
         </div>
     </div>
     <script>
-        let scheduledSessions = []; // Will store objects { id, scheduledAt, originalTimeStr, ueCount }
-        let baseMsin = null; // Will store the numeric part of the base MSIN
-        let currentMsinBase = null; // Tracks the current MSIN base for incrementing
+        let scheduledSessions = []; 
+        let baseMsin = null; 
+        let currentMsinBase = null; 
         let totalUeCount = 0;
         let sessionCount = 0;
         let ws = null;
+        let currentRunMode = 'scheduled'; // 'scheduled' or 'runNow'
+        
+        function handleModeChange(mode) {
+            currentRunMode = mode;
+            const ueCountInput = document.getElementById('ueCountInput');
+            const ueCountInputLabel = document.getElementById('ueCountInputLabel');
+            const nextSessionInfoDiv = document.getElementById('next-session-info');
+
+            if (mode === 'scheduled') {
+                ueCountInput.disabled = true;
+                ueCountInputLabel.textContent = 'UE count for "Run Now" mode. For "Scheduled", it\'s from flight data.';
+                // nextSessionInfoDiv.style.display = 'block'; // Or handled by updateNextSessionDisplay
+                updateNextSessionDisplay(); // Refresh display, might show "no sessions" if none loaded
+            } else { // runNow
+                ueCountInput.disabled = false;
+                ueCountInputLabel.textContent = 'Enter the number of UEs for the immediate session.';
+                nextSessionInfoDiv.style.display = 'none'; 
+            }
+            // Consider calling stop() to reset state when mode changes, if appropriate for UX
+            // stop(); // This would clear logs and stop any running/scheduled sessions
+        }
         
         // WebSocket connection for real-time logs
         function connectWebSocket() {
@@ -219,6 +248,11 @@ const HTML = `
                 .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime());
 
             const nextSessionInfoDiv = document.getElementById('next-session-info');
+            if (currentRunMode === 'runNow') {
+                nextSessionInfoDiv.style.display = 'none';
+                return;
+            }
+
             if (upcomingSessions.length > 0) {
                 const nextSession = upcomingSessions[0];
                 const timeToNext = Math.round((nextSession.scheduledAt.getTime() - now.getTime()) / 1000);
@@ -226,13 +260,18 @@ const HTML = `
                 nextSessionInfoDiv.style.background = '#007bff'; // Blue for scheduled
                 nextSessionInfoDiv.style.display = 'block';
             } else {
-                const anySessionRunningOrJustFinished = scheduledSessions.some(s => s.isRunning);
-                if (!anySessionRunningOrJustFinished && sessionCount > 0) { // Check if sessions actually ran
+                // const anySessionRunningOrJustFinished = scheduledSessions.some(s => s.isRunning);
+                // Check if start was pressed and no sessions were scheduled (e.g. all flights in past or no data)
+                const startButtonPressed = document.querySelector('.start').disabled;
+
+                if (sessionCount > 0 && !scheduledSessions.some(s => s.isRunning || s.scheduledAt.getTime() > now.getTime())) {
                      nextSessionInfoDiv.textContent = 'All scheduled sessions for today have finished.';
                      nextSessionInfoDiv.style.background = '#4CAF50'; // Green for completed
-                } else if (sessionCount === 0 && document.querySelector('.start').disabled) { // Started but no valid flights
-                    nextSessionInfoDiv.textContent = 'No future sessions scheduled for today.';
+                     nextSessionInfoDiv.style.display = 'block';
+                } else if (startButtonPressed && scheduledSessions.length === 0 && sessionCount === 0) { 
+                    nextSessionInfoDiv.textContent = 'No future sessions were scheduled (e.g., all flight times past or no data).';
                     nextSessionInfoDiv.style.background = '#ff9800'; // Orange for warning/notice
+                    nextSessionInfoDiv.style.display = 'block';
                 }
                 else {
                     nextSessionInfoDiv.style.display = 'none';
@@ -261,10 +300,17 @@ const HTML = `
             }
         }
         
-        async function runMultiUeSession(baseIMSI, ueCountForSession, flightOriginalTimeStr) {
+        async function runMultiUeSession(baseIMSI, ueCountForSession, sessionContext = null) {
+            // sessionContext can be flightOriginalTimeStr for scheduled, or an object like { type: 'runNow' } for immediate
+            let isScheduledRun = typeof sessionContext === 'string'; // flightOriginalTimeStr implies scheduled
+            if (sessionContext && typeof sessionContext === 'object' && sessionContext.type === 'runNow') {
+                isScheduledRun = false;
+            }
+
             document.getElementById('connection-status').textContent = 'Session Running...';
             document.getElementById('connection-status').className = 'status running';
             
+            // baseMsin and currentMsinBase are now set in start() and updated here per session
             if (baseMsin === null) {
                 const msinPart = baseIMSI.slice(-10);
                 baseMsin = parseInt(msinPart);
@@ -293,14 +339,27 @@ const HTML = `
             } catch (e) {
                 log(\`Session #\${sessionCount} error: \${e.message}\`);
             } finally {
-                // Reset status after each session; might be quickly overwritten if many sessions
-                const sessionToMarkDone = scheduledSessions.find(s => s.ueCount === ueCountForSession && s.originalTimeStr === flightOriginalTimeStr);
-                if(sessionToMarkDone) sessionToMarkDone.isRunning = false;
+                if (isScheduledRun) {
+                    const sessionToMarkDone = scheduledSessions.find(s => s.ueCount === ueCountForSession && s.originalTimeStr === sessionContext);
+                    if(sessionToMarkDone) sessionToMarkDone.isRunning = false;
+                }
 
                 document.getElementById('connection-status').textContent = 'Connected to server';
                 document.getElementById('connection-status').className = 'status connected';
                 log(\`⏱️ Session #\${sessionCount} finished. Total UEs so far: \${totalUeCount}\`);
-                updateNextSessionDisplay(); // Update display for the *next* session
+                if (isScheduledRun) {
+                    updateNextSessionDisplay(); 
+                } else {
+                    // For runNow, perhaps just re-enable start button if it was a single run
+                    // However, stop() function handles UI reset more comprehensively.
+                    // If stop() is not called, user might need to press stop/reset manually.
+                    document.querySelector('.start').disabled = false; // Re-enable for another potential runNow
+                    document.querySelector('.stop').disabled = true;
+                    document.getElementById('mcc').disabled = false;
+                    document.getElementById('mnc').disabled = false;
+                    document.getElementById('msinBase').disabled = false;
+                    if(currentRunMode === 'runNow') document.getElementById('ueCountInput').disabled = false;
+                }
             }
         }
         
@@ -323,7 +382,6 @@ const HTML = `
         }
         
         async function start() {
-            // Clear any existing session timeouts
             scheduledSessions.forEach(session => clearTimeout(session.id));
             scheduledSessions = [];
 
@@ -331,97 +389,134 @@ const HTML = `
             const mnc = document.getElementById('mnc').value;
             const msinBaseInput = document.getElementById('msinBase').value;
 
-            if (!mcc || mcc.length !== 3) {
+            if (!mcc || mcc.length !== 3) { 
                 alert('Enter a valid 3-character MCC.');
                 return;
             }
-            if (!mnc || mnc.length !== 2) {
+            if (!mnc || mnc.length !== 2) { 
                 alert('Enter a valid 2-character MNC.');
                 return;
             }
-            if (!msinBaseInput || msinBaseInput.length !== 10) {
-                alert('Enter a valid 10-digit Base MSIN.');
+            // As per user's last change, allow any 10 chars for MSIN. Standard MSINs are numeric.
+            if (!msinBaseInput || msinBaseInput.length !== 10) { 
+                alert('Enter a valid 10-character Base MSIN.');
                 return;
             }
 
             const baseIMSI = mcc + mnc + msinBaseInput;
-            baseMsin = parseInt(msinBaseInput);
-            currentMsinBase = baseMsin;
-            sessionCount = 0;
-            totalUeCount = 0;
+            try {
+                baseMsin = parseInt(msinBaseInput);
+                if (isNaN(baseMsin)) {
+                    log('Warning: Base MSIN is not a number. IMSI incrementation might behave unexpectedly if packetrusher expects a numeric MSIN.');
+                    // For packetrusher, msin in config is usually numeric. We proceed but log a warning.
+                    // A truly non-numeric MSIN base might not work with currentMsinBase += ueCount logic.
+                    // For now, we let it proceed, assuming packetrusher handles non-numeric msin if it encounters it.
+                    currentMsinBase = msinBaseInput; // Keep as string if not parsable as int for direct use, though increment would fail
+                } else {
+                     currentMsinBase = baseMsin; // Set current MSIN base for the first session
+                }
+            } catch (e) {
+                 log('Error parsing MSIN: ' + e.message + ". Proceeding with MSIN as string. Incrementation might not work.");
+                 currentMsinBase = msinBaseInput; // Fallback to string
+            }
+           
+            sessionCount = 0;       
+            totalUeCount = 0;       
 
             document.querySelector('.start').disabled = true;
             document.querySelector('.stop').disabled = false;
             document.getElementById('mcc').disabled = true;
             document.getElementById('mnc').disabled = true;
             document.getElementById('msinBase').disabled = true;
+            document.getElementById('ueCountInput').disabled = true; // Always disable during any run
+            document.querySelectorAll('input[name="runMode"]').forEach(radio => radio.disabled = true);
 
-            log(\`Fetching flight data to schedule PacketRusher sessions with base IMSI prefix: \${mcc}\${mnc} and MSIN starting from \${msinBaseInput}\`);
-            
-            const flightData = await getFlightData();
 
-            if (!flightData || flightData.length === 0) {
-                log('No flight data available or error fetching. Cannot schedule sessions.');
-                stop();
-                return;
-            }
+            if (currentRunMode === 'scheduled') {
+                log(\`Fetching flight data to schedule PacketRusher sessions with base IMSI prefix: \${mcc}\${mnc} and MSIN starting from \${msinBaseInput}\`);
+                document.getElementById('next-session-info').style.display = 'block'; // Show it for scheduling updates
+                
+                const flightData = await getFlightData();
 
-            log(\`Found \${flightData.length} flight entries. Scheduling sessions...\`);
-
-            const now = new Date();
-            let scheduledCount = 0;
-
-            flightData.forEach((flight, index) => {
-                const [timeStr, period] = flight.time.split(' ');
-                let [hours, minutes, seconds] = timeStr.split(':').map(Number);
-
-                if (period === 'PM' && hours !== 12) {
-                    hours += 12;
-                } else if (period === 'AM' && hours === 12) {
-                    hours = 0;
+                if (!flightData || flightData.length === 0) {
+                    log('No flight data available or error fetching. Cannot schedule sessions.');
+                    updateNextSessionDisplay(); // Update display to show no sessions scheduled
+                    // Do not call stop() here, let user explicitly stop/reset or try again
+                    return; // Exit start() if no flight data
                 }
 
-                const flightTimeToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, seconds);
-                const delay = flightTimeToday.getTime() - now.getTime();
+                log(\`Found \${flightData.length} flight entries. Scheduling sessions...\`);
+                const now = new Date();
+                let scheduledCount = 0;
 
-                if (delay > 0) {
-                    const currentFlightData = { ...flight }; // Capture current flight data for the timeout
+                flightData.forEach((flight, index) => {
+                    const [timeStr, period] = flight.time.split(' ');
+                    let [hours, minutes, seconds] = timeStr.split(':').map(Number);
 
-                    const timeoutId = setTimeout(() => {
-                        const nextSessionInfoDiv = document.getElementById('next-session-info');
-                        nextSessionInfoDiv.textContent = \`Running session for: \${currentFlightData.time} (\${currentFlightData.foreignPassengers} UEs)\`;
-                        nextSessionInfoDiv.style.background = '#f57c00'; // Orange for running
-                        nextSessionInfoDiv.style.display = 'block';
-                        
-                        const sessionMarker = scheduledSessions.find(s => s.id === timeoutId);
-                        if(sessionMarker) sessionMarker.isRunning = true;
+                    if (period === 'PM' && hours !== 12) {
+                        hours += 12;
+                    } else if (period === 'AM' && hours === 12) { 
+                        hours = 0;
+                    }
 
-                        // Pass the original baseIMSI (MCC+MNC+initial MSIN) 
-                        // and the specific ueCount (foreignPassengers) for this flight
-                        // Also pass the original flight time string for logging/identification if needed
-                        runMultiUeSession(baseIMSI, currentFlightData.foreignPassengers, currentFlightData.time);
-                    }, delay);
-                    scheduledSessions.push({ 
-                        id: timeoutId, 
-                        scheduledAt: flightTimeToday, 
-                        originalTimeStr: flight.time, 
-                        ueCount: flight.foreignPassengers,
-                        isRunning: false
-                    });
-                    scheduledCount++;
+                    const flightTimeToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, seconds);
+                    const delay = flightTimeToday.getTime() - now.getTime();
+
+                    if (delay > 0) {
+                        const currentFlightData = { ...flight }; 
+                        const timeoutId = setTimeout(() => {
+                            const nextSessionInfoDiv = document.getElementById('next-session-info');
+                            nextSessionInfoDiv.textContent = \`Running session for: \${currentFlightData.time} (\${currentFlightData.foreignPassengers} UEs)\`;
+                            nextSessionInfoDiv.style.background = '#f57c00'; 
+                            nextSessionInfoDiv.style.display = 'block';
+                            
+                            const sessionMarker = scheduledSessions.find(s => s.id === timeoutId);
+                            if(sessionMarker) sessionMarker.isRunning = true;
+
+                            runMultiUeSession(baseIMSI, currentFlightData.foreignPassengers, currentFlightData.time);
+                        }, delay);
+                        scheduledSessions.push({ 
+                            id: timeoutId, 
+                            scheduledAt: flightTimeToday, 
+                            originalTimeStr: flight.time, 
+                            ueCount: flight.foreignPassengers,
+                            isRunning: false
+                        });
+                        scheduledCount++;
+                    } else {
+                        log(\`Skipping past flight time: \${flight.time}\`);
+                    }
+                });
+
+                if (scheduledCount > 0) {
+                    log(\`Successfully scheduled \${scheduledCount} future sessions based on flight data.\`);
+                    log(\`Base MSIN for the first session will be \${(typeof currentMsinBase === 'number' ? currentMsinBase.toString().padStart(10, '0') : currentMsinBase)} It will increment for subsequent UEs/sessions.\`);
                 } else {
-                    log(\`Skipping past flight time: \${flight.time}\`);
+                    log('No future flight times found to schedule. All flight times may be in the past for today.');
                 }
-            });
+                updateNextSessionDisplay(); 
 
-            if (scheduledCount > 0) {
-                log(\`Successfully scheduled \${scheduledCount} future sessions based on flight data.\`);
-                log(\`Base MSIN for the first session will be \${currentMsinBase.toString().padStart(10, '0')}. It will increment for subsequent UEs/sessions.\`);
-            } else {
-                log('No future flight times found to schedule. All flight times may be in the past for today.');
-                stop();
+            } else { // currentRunMode === 'runNow'
+                const ueCountNow = parseInt(document.getElementById('ueCountInput').value);
+                if (isNaN(ueCountNow) || ueCountNow < 1) {
+                    alert('Please enter a valid number of UEs for Run Now mode (1 or more).');
+                    // Reset UI to allow correction
+                    document.querySelector('.start').disabled = false;
+                    document.querySelector('.stop').disabled = true;
+                    document.getElementById('mcc').disabled = false;
+                    document.getElementById('mnc').disabled = false;
+                    document.getElementById('msinBase').disabled = false;
+                    document.getElementById('ueCountInput').disabled = false;
+                    document.querySelectorAll('input[name="runMode"]').forEach(radio => radio.disabled = false);
+                    return;
+                }
+                log(\`Starting a single session with \${ueCountNow} UEs now. Base MSIN: \${(typeof currentMsinBase === 'number' ? currentMsinBase.toString().padStart(10, '0') : currentMsinBase)}\`);
+                document.getElementById('next-session-info').style.display = 'none'; // No next session display for run now
+                // For runNow, sessionContext can be a simple object or null
+                await runMultiUeSession(baseIMSI, ueCountNow, { type: 'runNow' }); 
+                // After a single runNow, the UI is partially re-enabled in runMultiUeSession's finally block.
+                // Or user can press Stop/Reset for a full UI reset.
             }
-            updateNextSessionDisplay(); // Initial display of the next session
         }
         
         function stop() {
@@ -433,13 +528,25 @@ const HTML = `
             document.getElementById('mcc').disabled = false;
             document.getElementById('mnc').disabled = false;
             document.getElementById('msinBase').disabled = false;
+            document.querySelectorAll('input[name="runMode"]').forEach(radio => radio.disabled = false);
+            
+            // Handle ueCountInput based on current mode
+            const ueCountInput = document.getElementById('ueCountInput');
+            if (currentRunMode === 'scheduled') {
+                ueCountInput.disabled = true;
+            } else { // 'runNow'
+                ueCountInput.disabled = false;
+            }
 
             document.getElementById('connection-status').textContent = 'Connected to server';
             document.getElementById('connection-status').className = 'status connected';
-            log(\`Stopped all scheduled sessions. \${sessionCount} sessions ran, \${totalUeCount} total UEs processed.\`);
+            log(\`Stopped / Reset. \${sessionCount} sessions ran in the last active period, \${totalUeCount} total UEs processed.\`);
+            updateNextSessionDisplay(); 
+            // Reset counters for the next "start"
             baseMsin = null;
             currentMsinBase = null;
-            updateNextSessionDisplay(); // Clear the next session display
+            // sessionCount = 0; // Keep these to show final count until next start or reset explicitly
+            // totalUeCount = 0;
         }
         
         // Connect to WebSocket when page loads
