@@ -8,7 +8,7 @@ const yaml = require('js-yaml');
 const PORT = 3000;
 
 // Paths to packetrusher folder (sibling folder)
-const PACKETRUSHER_DIR = path.join(__dirname, '..', 'packetrusher');
+const PACKETRUSHER_DIR = path.join(__dirname, '..', 'PacketRusher');
 const CONFIG_PATH = path.join(PACKETRUSHER_DIR, 'config', 'config.yaml');
 const BINARY_PATH = path.join(PACKETRUSHER_DIR, 'packetrusher');
 
