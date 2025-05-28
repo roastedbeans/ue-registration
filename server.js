@@ -129,11 +129,11 @@ const HTML = `
         
         <div class="logs-container">
             <div class="log-section">
-                <h3>📊 Session Logs</h3>
+                <h3>Session Logs</h3>
                 <div id="logs"></div>
             </div>
             <div class="log-section">
-                <h3>🚀 PacketRusher Output</h3>
+                <h3>PacketRusher Output</h3>
                 <div id="packetrusher-logs"></div>
             </div>
         </div>
