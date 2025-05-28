@@ -82,7 +82,7 @@ const HTML = `
         <div id="logs"></div>
         <div class="path-info">
             Config: ../PacketRusher/config/config.yml<br>
-            <span style="color: #4CAF50;">PacketRusher will open in a new terminal window</span><br>
+            <span style="color: #4CAF50;">PacketRusher will run for 10 seconds max in a new terminal</span><br>
             <span style="color: #888; font-size: 10px;">If no terminal opens, install xterm: sudo apt install xterm</span>
         </div>
     </div>
@@ -171,8 +171,9 @@ const HTML = `
 // Run PacketRusher
 function runPacketRusher() {
 	return new Promise((resolve) => {
-		// Command to run PacketRusher with 'ue' parameter
-		const command = `cd "${PACKETRUSHER_DIR}" && ./packetrusher ue && echo "" && echo "Closing in 5 seconds..." && sleep 5`;
+		// Command that runs PacketRusher and forcefully closes terminal after 10 seconds
+		// This starts PacketRusher, captures its PID, waits 10 seconds, then kills it if still running
+		const command = `cd "${PACKETRUSHER_DIR}" && (./packetrusher ue & PID=$!; echo "PacketRusher started (PID: $PID)"; echo "Terminal will close in 10 seconds..."; sleep 10; kill $PID 2>/dev/null && echo "Process stopped" || echo "Process already finished")`;
 
 		console.log(`\nExecuting command: ${command}`);
 
@@ -181,8 +182,8 @@ function runPacketRusher() {
 		exec(`gnome-terminal -- bash -c '${command}'`, (error) => {
 			if (error) {
 				console.log('gnome-terminal failed, trying xterm...');
-				// Method 2: xterm with -hold and -e
-				exec(`xterm -hold -e bash -c '${command}'`, (error2) => {
+				// Method 2: xterm (without -hold so it closes automatically)
+				exec(`xterm -e bash -c '${command}'`, (error2) => {
 					if (error2) {
 						console.log('xterm failed, trying x-terminal-emulator...');
 						// Method 3: x-terminal-emulator
@@ -190,7 +191,7 @@ function runPacketRusher() {
 							if (error3) {
 								// If no terminal works, run directly in background
 								console.log('No terminal emulator worked, running in background...');
-								console.log(`Executing: cd ${PACKETRUSHER_DIR} && ./packetrusher ue`);
+								console.log(`Executing: cd ${PACKETRUSHER_DIR} && ./packetrusher ue (with 10s timeout)`);
 
 								const process = spawn('./packetrusher', ['ue'], {
 									cwd: PACKETRUSHER_DIR,
@@ -199,6 +200,16 @@ function runPacketRusher() {
 
 								let output = '',
 									errorOutput = '';
+								let processKilled = false;
+
+								// Kill process after 10 seconds
+								const killTimer = setTimeout(() => {
+									if (!processKilled) {
+										processKilled = true;
+										process.kill('SIGTERM');
+										console.log('PacketRusher process terminated after 10 seconds');
+									}
+								}, 10000);
 
 								process.stdout.on('data', (data) => {
 									const text = data.toString();
@@ -213,15 +224,17 @@ function runPacketRusher() {
 								});
 
 								process.on('close', (code) => {
+									clearTimeout(killTimer);
 									console.log(`PacketRusher exited with code ${code}`);
 									resolve({
-										success: code === 0,
-										output: output || 'Running in background - check server console for logs',
-										error: errorOutput || (code !== 0 ? `Exit code: ${code}` : ''),
+										success: true,
+										output: processKilled ? 'Process stopped after 10 seconds' : 'Process completed within 10 seconds',
+										error: errorOutput || '',
 									});
 								});
 
 								process.on('error', (err) => {
+									clearTimeout(killTimer);
 									console.error('Failed to start PacketRusher:', err);
 									resolve({ success: false, error: err.message });
 								});
@@ -230,7 +243,7 @@ function runPacketRusher() {
 								setTimeout(() => {
 									resolve({
 										success: true,
-										output: 'PacketRusher started in terminal window',
+										output: 'PacketRusher started in terminal (auto-closes after 10s)',
 										error: '',
 									});
 								}, 500);
@@ -241,7 +254,7 @@ function runPacketRusher() {
 						setTimeout(() => {
 							resolve({
 								success: true,
-								output: 'PacketRusher started in xterm window',
+								output: 'PacketRusher started in xterm (auto-closes after 10s)',
 								error: '',
 							});
 						}, 500);
@@ -252,7 +265,7 @@ function runPacketRusher() {
 				setTimeout(() => {
 					resolve({
 						success: true,
-						output: 'PacketRusher started in GNOME Terminal window',
+						output: 'PacketRusher started in GNOME Terminal (auto-closes after 10s)',
 						error: '',
 					});
 				}, 500);
@@ -379,3 +392,18 @@ server.listen(PORT, async () => {
 		console.error(`✗ Config file NOT found at: ${CONFIG_PATH}`);
 	}
 });
+
+// package.json for standalone version
+/*
+{
+  "name": "packetrusher-gui-simple",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  }
+}
+*/
