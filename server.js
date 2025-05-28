@@ -5,6 +5,7 @@ const fsConstants = require('fs').constants;
 const path = require('path');
 const { spawn, exec } = require('child_process');
 const yaml = require('js-yaml');
+const WebSocket = require('ws');
 
 const PORT = 3000;
 
@@ -12,6 +13,9 @@ const PORT = 3000;
 const PACKETRUSHER_DIR = path.join(__dirname, '..', 'PacketRusher');
 const CONFIG_PATH = path.join(PACKETRUSHER_DIR, 'config', 'config.yml');
 const BINARY_PATH = path.join(PACKETRUSHER_DIR, 'packetrusher');
+
+// Global WebSocket connections
+let wsClients = [];
 
 // Simple HTML interface
 const HTML = `
@@ -22,8 +26,8 @@ const HTML = `
     <style>
         body { 
             font-family: Arial; 
-            max-width: 500px; 
-            margin: 50px auto; 
+            max-width: 800px; 
+            margin: 20px auto; 
             padding: 20px;
             background: #1a1a1a;
             color: #e0e0e0;
@@ -53,16 +57,34 @@ const HTML = `
         }
         .start { background: #4CAF50; }
         .stop { background: #f44336; }
+        .clear { background: #ff9800; margin-top: 10px; }
         button:disabled { opacity: 0.5; }
-        #logs { 
+        .logs-container {
+            display: flex;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .log-section {
+            flex: 1;
+        }
+        .log-section h3 {
+            margin: 0 0 10px 0;
+            color: #4CAF50;
+            font-size: 14px;
+        }
+        #logs, #packetrusher-logs { 
             background: #1a1a1a; 
             padding: 15px; 
-            margin-top: 20px;
-            height: 200px;
+            height: 300px;
             overflow-y: auto;
             font-family: monospace;
             font-size: 12px;
             border-radius: 5px;
+            border: 1px solid #444;
+        }
+        #packetrusher-logs {
+            background: #0a0a0a;
+            border-color: #4CAF50;
         }
         .path-info {
             font-size: 11px;
@@ -76,11 +98,23 @@ const HTML = `
         .input-group input {
             flex: 1;
         }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            text-align: center;
+            font-weight: bold;
+        }
+        .status.connected { background: #2e7d32; }
+        .status.disconnected { background: #d32f2f; }
+        .status.running { background: #f57c00; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>PacketRusher Multi-UE Controller</h1>
+        <div id="connection-status" class="status disconnected">Connecting to server...</div>
+        
         <input type="text" id="imsi" placeholder="Base IMSI (15 digits)" maxlength="15">
         <small style="color: #888; font-size: 11px;">MSIN will increment for each UE and continue from last run</small>
         
@@ -91,20 +125,63 @@ const HTML = `
         
         <button class="start" onclick="start()">Start Multi-UE Session</button>
         <button class="stop" onclick="stop()" disabled>Stop</button>
-        <div id="logs"></div>
+        <button class="clear" onclick="clearLogs()">Clear Logs</button>
+        
+        <div class="logs-container">
+            <div class="log-section">
+                <h3>📊 Session Logs</h3>
+                <div id="logs"></div>
+            </div>
+            <div class="log-section">
+                <h3>🚀 PacketRusher Output</h3>
+                <div id="packetrusher-logs"></div>
+            </div>
+        </div>
+        
         <div class="path-info">
             Config: ../PacketRusher/config/config.yml<br>
-            <span style="color: #4CAF50;">Each UE will run for 10 seconds max in separate terminals</span><br>
-            <span style="color: #888; font-size: 10px;">If no terminal opens, install xterm: sudo apt install xterm</span>
+            <span style="color: #4CAF50;">PacketRusher runs directly in the app with real-time logs</span><br>
+            <span style="color: #888; font-size: 10px;">All output is captured and displayed in real-time</span>
         </div>
     </div>
     <script>
         let intervalId;
         let currentMsinBase = null;
         let baseMsin = null;
-        let totalUeCount = 0; // Total UEs run across all sessions
+        let totalUeCount = 0;
         let sessionCount = 0;
-        let isRunning = false; // Track if a session is currently running
+        let isRunning = false;
+        let ws = null;
+        
+        // WebSocket connection for real-time logs
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(\`\${protocol}//\${window.location.host}\`);
+            
+            ws.onopen = function() {
+                document.getElementById('connection-status').textContent = 'Connected to server';
+                document.getElementById('connection-status').className = 'status connected';
+            };
+            
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                if (data.type === 'packetrusher-log') {
+                    logPacketRusher(data.message, data.level);
+                }
+            };
+            
+            ws.onclose = function() {
+                document.getElementById('connection-status').textContent = 'Disconnected from server';
+                document.getElementById('connection-status').className = 'status disconnected';
+                // Attempt to reconnect after 3 seconds
+                setTimeout(connectWebSocket, 3000);
+            };
+            
+            ws.onerror = function() {
+                document.getElementById('connection-status').textContent = 'Connection error';
+                document.getElementById('connection-status').className = 'status disconnected';
+            };
+        }
         
         function log(msg) {
             const logs = document.getElementById('logs');
@@ -112,18 +189,32 @@ const HTML = `
             logs.innerHTML = \`[\${time}] \${msg}<br>\` + logs.innerHTML;
         }
         
+        function logPacketRusher(msg, level = 'info') {
+            const logs = document.getElementById('packetrusher-logs');
+            const time = new Date().toLocaleTimeString();
+            const color = level === 'error' ? '#ff6b6b' : level === 'warn' ? '#ffa726' : '#e0e0e0';
+            logs.innerHTML = \`<span style="color: \${color}">[\${time}] \${msg}</span><br>\` + logs.innerHTML;
+            logs.scrollTop = 0;
+        }
+        
+        function clearLogs() {
+            document.getElementById('logs').innerHTML = '';
+            document.getElementById('packetrusher-logs').innerHTML = '';
+        }
+        
         async function runMultiUeSession() {
-            // Skip if already running a session
             if (isRunning) {
                 log('⏳ Previous session still running, skipping this interval...');
                 return;
             }
             
             isRunning = true;
+            document.getElementById('connection-status').textContent = 'Session Running...';
+            document.getElementById('connection-status').className = 'status running';
+            
             const imsi = document.getElementById('imsi').value;
             const ueCount = parseInt(document.getElementById('ueCount').value);
             
-            // Initialize base MSIN on first run
             if (baseMsin === null) {
                 baseMsin = parseInt(imsi.slice(-10));
                 currentMsinBase = baseMsin;
@@ -132,7 +223,6 @@ const HTML = `
             sessionCount++;
             log(\`🚀 Session #\${sessionCount} - Starting \${ueCount} UEs with multi-ue command (MSIN base: \${currentMsinBase.toString().padStart(10, '0')})\`);
             
-            // Calculate MSIN range for this session
             const startMsin = currentMsinBase.toString().padStart(10, '0');
             const endMsin = (currentMsinBase + ueCount - 1).toString().padStart(10, '0');
             log(\`  📱 UE Range: MSIN \${startMsin} to \${endMsin} (\${ueCount} UEs total)\`);
@@ -141,9 +231,7 @@ const HTML = `
                 const result = await runMultiUeCommand(imsi, ueCount, sessionCount);
                 
                 if (result.success) {
-                    log(\`✅ Session #\${sessionCount} completed successfully: \${result.output}\`);
-                    
-                    // Update counters for next session
+                    log(\`✅ Session #\${sessionCount} completed successfully\`);
                     totalUeCount += ueCount;
                     currentMsinBase += ueCount;
                 } else {
@@ -153,7 +241,9 @@ const HTML = `
             } catch (e) {
                 log(\`❌ Session #\${sessionCount} error: \${e.message}\`);
             } finally {
-                isRunning = false; // Mark session as completed
+                isRunning = false;
+                document.getElementById('connection-status').textContent = 'Connected to server';
+                document.getElementById('connection-status').className = 'status connected';
                 log(\`⏱️ Session #\${sessionCount} finished, ready for next batch\`);
             }
         }
@@ -191,7 +281,6 @@ const HTML = `
                 return;
             }
             
-            // Reset running state
             isRunning = false;
             
             document.querySelector('.start').disabled = true;
@@ -209,131 +298,137 @@ const HTML = `
         
         function stop() {
             clearInterval(intervalId);
-            isRunning = false; // Reset running state
+            isRunning = false;
             document.querySelector('.start').disabled = false;
             document.querySelector('.stop').disabled = true;
             document.getElementById('imsi').disabled = false;
             document.getElementById('ueCount').disabled = false;
             document.getElementById('interval').disabled = false;
+            document.getElementById('connection-status').textContent = 'Connected to server';
+            document.getElementById('connection-status').className = 'status connected';
             log(\`🛑 Stopped after \${sessionCount} sessions (\${totalUeCount} total UEs)\`);
         }
+        
+        // Connect to WebSocket when page loads
+        window.onload = function() {
+            connectWebSocket();
+        };
     </script>
 </body>
 </html>
 `;
 
-// Run PacketRusher
-function runPacketRusher(ueNumber = 1, ueCount = 1) {
+// Run PacketRusher directly in the app
+function runPacketRusher(sessionNumber = 1, ueCount = 1) {
 	return new Promise((resolve) => {
-		// Command that runs PacketRusher multi-ue and forcefully closes terminal after 10 seconds
-		const command = `cd "${PACKETRUSHER_DIR}" && (./packetrusher multi-ue -n ${ueCount} & PID=$!; echo "Session #${ueNumber} PacketRusher multi-ue started with ${ueCount} UEs (PID: $PID)"; echo "Terminal will close in 10 seconds..."; sleep 10; kill $PID 2>/dev/null && echo "Session #${ueNumber} Process stopped" || echo "Session #${ueNumber} Process already finished")`;
+		console.log(`\nSession #${sessionNumber}: Starting PacketRusher multi-ue with ${ueCount} UEs`);
 
-		console.log(`\nExecuting command for Session #${ueNumber}: ${command}`);
-
-		// Try different methods to open terminal
-		// Method 1: gnome-terminal with bash -c
-		exec(
-			`gnome-terminal --title="PacketRusher Session #${ueNumber} (${ueCount} UEs)" -- bash -c '${command}'`,
-			(error) => {
-				if (error) {
-					console.log(`gnome-terminal failed for Session #${ueNumber}, trying xterm...`);
-					// Method 2: xterm (without -hold so it closes automatically)
-					exec(
-						`xterm -title "PacketRusher Session #${ueNumber} (${ueCount} UEs)" -e bash -c '${command}'`,
-						(error2) => {
-							if (error2) {
-								console.log(`xterm failed for Session #${ueNumber}, trying x-terminal-emulator...`);
-								// Method 3: x-terminal-emulator
-								exec(`x-terminal-emulator -e bash -c '${command}'`, (error3) => {
-									if (error3) {
-										// If no terminal works, run directly in background
-										console.log(`No terminal emulator worked for Session #${ueNumber}, running in background...`);
-										console.log(
-											`Executing: cd ${PACKETRUSHER_DIR} && ./packetrusher multi-ue -n ${ueCount} (with 10s timeout)`
-										);
-
-										const process = spawn('./packetrusher', ['multi-ue', '-n', ueCount.toString()], {
-											cwd: PACKETRUSHER_DIR,
-											stdio: ['inherit', 'pipe', 'pipe'],
-										});
-
-										let output = '',
-											errorOutput = '';
-										let processKilled = false;
-
-										// Kill process after 10 seconds
-										const killTimer = setTimeout(() => {
-											if (!processKilled) {
-												processKilled = true;
-												process.kill('SIGTERM');
-												console.log(`Session #${ueNumber} PacketRusher process terminated after 10 seconds`);
-											}
-										}, 10000);
-
-										process.stdout.on('data', (data) => {
-											const text = data.toString();
-											output += text;
-											console.log(`[Session #${ueNumber} PacketRusher Output]:`, text.trim());
-										});
-
-										process.stderr.on('data', (data) => {
-											const text = data.toString();
-											errorOutput += text;
-											console.error(`[Session #${ueNumber} PacketRusher Error]:`, text.trim());
-										});
-
-										process.on('close', (code) => {
-											clearTimeout(killTimer);
-											console.log(`Session #${ueNumber} PacketRusher exited with code ${code}`);
-											resolve({
-												success: true,
-												output: processKilled
-													? `Session #${ueNumber} Process stopped after 10 seconds (${ueCount} UEs)`
-													: `Session #${ueNumber} Process completed within 10 seconds (${ueCount} UEs)`,
-												error: errorOutput || '',
-											});
-										});
-
-										process.on('error', (err) => {
-											clearTimeout(killTimer);
-											console.error(`Failed to start Session #${ueNumber} PacketRusher:`, err);
-											resolve({ success: false, error: err.message });
-										});
-									} else {
-										// x-terminal-emulator worked
-										setTimeout(() => {
-											resolve({
-												success: true,
-												output: `Session #${ueNumber} PacketRusher started in terminal (${ueCount} UEs, auto-closes after 10s)`,
-												error: '',
-											});
-										}, 500);
-									}
-								});
-							} else {
-								// xterm worked
-								setTimeout(() => {
-									resolve({
-										success: true,
-										output: `Session #${ueNumber} PacketRusher started in xterm (${ueCount} UEs, auto-closes after 10s)`,
-										error: '',
-									});
-								}, 500);
-							}
-						}
-					);
-				} else {
-					// gnome-terminal worked
-					setTimeout(() => {
-						resolve({
-							success: true,
-							output: `Session #${ueNumber} PacketRusher started in GNOME Terminal (${ueCount} UEs, auto-closes after 10s)`,
-							error: '',
-						});
-					}, 500);
+		// Broadcast to all WebSocket clients
+		const broadcast = (message, level = 'info') => {
+			const data = JSON.stringify({
+				type: 'packetrusher-log',
+				message: message,
+				level: level,
+				timestamp: new Date().toISOString(),
+			});
+			wsClients.forEach((ws) => {
+				if (ws.readyState === 1) {
+					// WebSocket.OPEN
+					ws.send(data);
 				}
+			});
+		};
+
+		broadcast(`🚀 Session #${sessionNumber} starting with ${ueCount} UEs...`);
+
+		const process = spawn('./packetrusher', ['multi-ue', '-n', ueCount.toString()], {
+			cwd: PACKETRUSHER_DIR,
+			stdio: ['pipe', 'pipe', 'pipe'],
+		});
+
+		let output = '';
+		let errorOutput = '';
+		let processKilled = false;
+
+		// Kill process after 30 seconds (increased timeout for multi-UE)
+		const killTimer = setTimeout(() => {
+			if (!processKilled) {
+				processKilled = true;
+				process.kill('SIGTERM');
+				broadcast(`⏰ Session #${sessionNumber} terminated after 30 seconds`, 'warn');
+				console.log(`Session #${sessionNumber} PacketRusher process terminated after 30 seconds`);
 			}
-		);
+		}, 30000);
+
+		process.stdout.on('data', (data) => {
+			const text = data.toString().trim();
+			if (text) {
+				output += text + '\n';
+				// Split by lines and broadcast each line
+				text.split('\n').forEach((line) => {
+					if (line.trim()) {
+						broadcast(line.trim());
+						console.log(`[Session #${sessionNumber} Output]:`, line.trim());
+					}
+				});
+			}
+		});
+
+		process.stderr.on('data', (data) => {
+			const text = data.toString().trim();
+			if (text) {
+				errorOutput += text + '\n';
+				// Split by lines and broadcast each line as error
+				text.split('\n').forEach((line) => {
+					if (line.trim()) {
+						broadcast(line.trim(), 'error');
+						console.error(`[Session #${sessionNumber} Error]:`, line.trim());
+					}
+				});
+			}
+		});
+
+		process.on('close', (code) => {
+			clearTimeout(killTimer);
+			const duration = processKilled
+				? '30s (timeout)'
+				: `${Math.round((Date.now() - process.spawnargs.startTime) / 1000)}s`;
+
+			if (code === 0) {
+				broadcast(`✅ Session #${sessionNumber} completed successfully (exit code: ${code})`, 'info');
+				console.log(`Session #${sessionNumber} PacketRusher completed successfully with code ${code}`);
+				resolve({
+					success: true,
+					output: `Session #${sessionNumber} completed successfully (${ueCount} UEs)`,
+					error: '',
+					duration: duration,
+				});
+			} else {
+				broadcast(`❌ Session #${sessionNumber} failed (exit code: ${code})`, 'error');
+				console.log(`Session #${sessionNumber} PacketRusher exited with code ${code}`);
+				resolve({
+					success: false,
+					output: output,
+					error: errorOutput || `Process exited with code ${code}`,
+					duration: duration,
+				});
+			}
+		});
+
+		process.on('error', (err) => {
+			clearTimeout(killTimer);
+			broadcast(`💥 Session #${sessionNumber} failed to start: ${err.message}`, 'error');
+			console.error(`Failed to start Session #${sessionNumber} PacketRusher:`, err);
+			resolve({
+				success: false,
+				error: `Failed to start PacketRusher: ${err.message}`,
+				output: '',
+				duration: '0s',
+			});
+		});
+
+		// Store start time for duration calculation
+		process.spawnargs.startTime = Date.now();
 	});
 }
 
@@ -415,32 +510,40 @@ const server = http.createServer(async (req, res) => {
 	}
 });
 
+// WebSocket Server
+const wss = new WebSocket.Server({ server });
+
+wss.on('connection', (ws) => {
+	console.log('New WebSocket client connected');
+	wsClients.push(ws);
+
+	// Send welcome message
+	ws.send(
+		JSON.stringify({
+			type: 'packetrusher-log',
+			message: '🔗 Connected to PacketRusher Controller',
+			level: 'info',
+			timestamp: new Date().toISOString(),
+		})
+	);
+
+	ws.on('close', () => {
+		console.log('WebSocket client disconnected');
+		wsClients = wsClients.filter((client) => client !== ws);
+	});
+
+	ws.on('error', (error) => {
+		console.error('WebSocket error:', error);
+		wsClients = wsClients.filter((client) => client !== ws);
+	});
+});
+
 // Start server
 server.listen(PORT, async () => {
 	console.log(`Server running at http://localhost:${PORT}`);
 	console.log(`PacketRusher directory: ${PACKETRUSHER_DIR}`);
-	console.log('\nChecking terminal emulators...');
-
-	// Check which terminal emulators are available
-	exec('which gnome-terminal', (err) => {
-		if (!err) console.log('✓ gnome-terminal found');
-		else console.log('✗ gnome-terminal not found (install with: sudo apt install gnome-terminal)');
-	});
-
-	exec('which x-terminal-emulator', (err) => {
-		if (!err) console.log('✓ x-terminal-emulator found');
-		else console.log('✗ x-terminal-emulator not found');
-	});
-
-	exec('which xterm', (err) => {
-		if (!err) console.log('✓ xterm found');
-		else console.log('✗ xterm not found (install with: sudo apt install xterm)');
-	});
-
-	exec('which konsole', (err) => {
-		if (!err) console.log('✓ konsole found');
-		else console.log('✗ konsole not found');
-	});
+	console.log('\n🚀 PacketRusher Controller started with direct execution mode');
+	console.log('📊 Real-time logs will be streamed to the web interface');
 
 	// Check if packetrusher binary exists
 	try {
@@ -449,11 +552,13 @@ server.listen(PORT, async () => {
 		// Check if it's executable
 		try {
 			await fs.access(BINARY_PATH, fsConstants.X_OK);
+			console.log('✓ Binary is executable');
 		} catch (err) {
 			console.log('⚠ Binary may not be executable. Run: chmod +x ../PacketRusher/packetrusher');
 		}
 	} catch (err) {
 		console.error(`\n✗ PacketRusher binary NOT found at: ${BINARY_PATH}`);
+		console.error('Please ensure PacketRusher is built and located in the correct directory');
 	}
 
 	// Check if config.yml exists
@@ -462,7 +567,10 @@ server.listen(PORT, async () => {
 		console.log(`✓ Config file found: ${CONFIG_PATH}`);
 	} catch (err) {
 		console.error(`✗ Config file NOT found at: ${CONFIG_PATH}`);
+		console.error('Please ensure config.yml exists in the PacketRusher config directory');
 	}
+
+	console.log('\n📱 Open http://localhost:3000 in your browser to start using the controller');
 });
 
 // package.json for standalone version
@@ -475,7 +583,8 @@ server.listen(PORT, async () => {
     "start": "node server.js"
   },
   "dependencies": {
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^4.1.0",
+    "ws": "^8.14.0"
   }
 }
 */
