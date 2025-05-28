@@ -82,6 +82,9 @@ const HTML = `
     </div>
     <script>
         let intervalId;
+        let currentMsin = null;
+        let baseMsin = null;
+        let runCount = 0;
         
         function log(msg) {
             const logs = document.getElementById('logs');
@@ -91,13 +94,25 @@ const HTML = `
         
         async function run() {
             const imsi = document.getElementById('imsi').value;
-            log(\`Running with IMSI: \${imsi}\`);
+            
+            // Calculate incremented MSIN
+            if (baseMsin === null) {
+                baseMsin = imsi.slice(-10);
+            }
+            
+            // Increment MSIN for each run
+            const msinNumber = parseInt(baseMsin) + runCount;
+            currentMsin = msinNumber.toString().padStart(10, '0');
+            const currentImsi = imsi.slice(0, 5) + currentMsin;
+            
+            log(\`Run #\${runCount + 1} - IMSI: \${currentImsi} (MSIN: \${currentMsin})\`);
+            runCount++;
             
             try {
                 const res = await fetch('/run', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ imsi })
+                    body: JSON.stringify({ imsi: currentImsi })
                 });
                 const data = await res.json();
                 log(data.success ? 'Success' : \`Error: \${data.error}\`);
@@ -115,6 +130,11 @@ const HTML = `
                 return;
             }
             
+            // Reset counters
+            baseMsin = null;
+            currentMsin = null;
+            runCount = 0;
+            
             document.querySelector('.start').disabled = true;
             document.querySelector('.stop').disabled = false;
             document.getElementById('imsi').disabled = true;
@@ -131,7 +151,7 @@ const HTML = `
             document.querySelector('.stop').disabled = true;
             document.getElementById('imsi').disabled = false;
             document.getElementById('interval').disabled = false;
-            log('Stopped');
+            log(\`Stopped after \${runCount} runs\`);
         }
     </script>
 </body>
@@ -220,6 +240,7 @@ const server = http.createServer(async (req, res) => {
 					return;
 				}
 
+				// Update MSIN with the exact value from the incremented IMSI
 				config.ue.msin = imsi.slice(-10);
 
 				// Write config back
@@ -262,18 +283,3 @@ server.listen(PORT, async () => {
 		console.error(`✗ Config file NOT found at: ${CONFIG_PATH}`);
 	}
 });
-
-// package.json for standalone version
-/*
-{
-  "name": "packetrusher-gui-simple",
-  "version": "1.0.0",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "dependencies": {
-    "js-yaml": "^4.1.0"
-  }
-}
-*/
