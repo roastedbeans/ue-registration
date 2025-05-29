@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PacketRusher Controller</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10/dist/ext/ws.js"></script>
+    <style>
+        body { 
+            font-family: Arial; 
+            max-width: 800px; 
+            margin: 20px auto; 
+            padding: 20px;
+            background: #1a1a1a;
+            color: #e0e0e0;
+        }
+        .container {
+            background: #2a2a2a;
+            padding: 30px;
+            border-radius: 10px;
+        }
+        input, button { 
+            padding: 10px; 
+            margin: 5px 0; 
+            width: 100%;
+            box-sizing: border-box;
+        }
+        input {
+            background: #1a1a1a;
+            border: 1px solid #444;
+            color: #e0e0e0;
+            border-radius: 5px;
+        }
+        button { 
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            color: white;
+        }
+        .start { background: #4CAF50; }
+        .stop { background: #f44336; }
+        .clear { background: #ff9800; margin-top: 10px; }
+        .get-flight-data { background: #2196F3; margin-top: 10px; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .logs-container {
+            display: flex;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .log-section {
+            flex: 1;
+        }
+        .log-section h3 {
+            margin: 0 0 10px 0;
+            color: #4CAF50;
+            font-size: 14px;
+        }
+        #logs, #packetrusher-logs { 
+            background: #1a1a1a; 
+            padding: 15px; 
+            height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            border-radius: 5px;
+            border: 1px solid #444;
+        }
+        #packetrusher-logs {
+            background: #0a0a0a;
+            border-color: #4CAF50;
+        }
+        .path-info {
+            font-size: 11px;
+            color: #666;
+            margin-top: 10px;
+        }
+        .input-group {
+            display: flex;
+            gap: 10px;
+        }
+        .input-group input {
+            flex: 1;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            text-align: center;
+            font-weight: bold;
+        }
+        .status.connected { background: #2e7d32; }
+        .status.disconnected { background: #d32f2f; }
+        .status.running { background: #f57c00; }
+        .htmx-indicator {
+            opacity: 0;
+            transition: opacity 500ms ease-in;
+        }
+        .htmx-request .htmx-indicator {
+            opacity: 1;
+        }
+        .htmx-request.htmx-indicator {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body hx-ext="ws" ws-connect="/ws">
+    <div class="container">
+        <h1>PacketRusher Multi-UE Controller</h1>
+        
+        <div id="connection-status" class="status disconnected">
+            Connecting to server...
+        </div>
+        
+        <form hx-post="/api/ui/update-form" hx-target="#form-container" hx-swap="outerHTML">
+            <div id="form-container">
+                <div class="input-group">
+                    <input type="text" name="mcc" placeholder="MCC (3 digits)" maxlength="3" value="001" required>
+                    <input type="text" name="mnc" placeholder="MNC (2 digits)" maxlength="2" value="01" required>
+                    <input type="text" name="msinBase" placeholder="Base MSIN (10 digits)" maxlength="10" required>
+                </div>
+                <small style="color: #888; font-size: 11px;">MSIN will increment for each UE. MCC & MNC are preset.</small>
+                
+                <div style="margin-top: 15px; margin-bottom: 15px;">
+                    <label style="margin-right: 10px;">
+                        <input type="radio" name="runMode" value="scheduled" checked 
+                               hx-post="/api/ui/mode-change" 
+                               hx-target="#mode-dependent-ui" 
+                               hx-trigger="change"> Scheduled (Flight Data)
+                    </label>
+                    <label>
+                        <input type="radio" name="runMode" value="runNow" 
+                               hx-post="/api/ui/mode-change" 
+                               hx-target="#mode-dependent-ui" 
+                               hx-trigger="change"> Run Now
+                    </label>
+                </div>
+
+                <div id="mode-dependent-ui">
+                    <div class="input-group" style="margin-top: 10px;">
+                        <input type="number" name="ueCountInput" placeholder="Number of UEs (for Run Now)" 
+                               value="1" min="1" max="100" disabled>
+                    </div>
+                    <small style="color: #888; font-size: 11px; display: block;">
+                        UE count for "Run Now" mode. For "Scheduled", it's from flight data.
+                    </small>
+                </div>
+            </div>
+        </form>
+        
+        <div id="control-buttons">
+            <button class="start" 
+                    hx-post="/api/sessions/start" 
+                    hx-include="[name='mcc'], [name='mnc'], [name='msinBase'], [name='runMode'], [name='ueCountInput']"
+                    hx-target="#control-buttons" 
+                    hx-swap="outerHTML">
+                Start Sessions
+                <span class="htmx-indicator">...</span>
+            </button>
+            <button class="stop" disabled
+                    hx-post="/api/sessions/stop" 
+                    hx-target="#control-buttons" 
+                    hx-swap="outerHTML">
+                Stop / Reset
+            </button>
+            <button class="clear" 
+                    hx-post="/api/logs/clear" 
+                    hx-target="#logs-container"
+                    hx-swap="innerHTML">
+                Clear Logs
+            </button>
+            <button class="get-flight-data" 
+                    hx-get="/api/flight-data" 
+                    hx-target="#flight-data-display">
+                Get Flight Data
+            </button>
+        </div>
+
+        <div id="next-session-info" class="status" style="margin-top: 15px; background: #007bff; display: none;"></div>
+
+        <div id="flight-data-display"></div>
+
+        <div id="logs-container" class="logs-container">
+            <div class="log-section">
+                <h3>Session Logs</h3>
+                <div id="logs"></div>
+            </div>
+            <div class="log-section">
+                <h3>PacketRusher Output</h3>
+                <div id="packetrusher-logs"></div>
+            </div>
+        </div>
+        
+        <div class="path-info">
+            Config: ../PacketRusher/config/config.yml<br>
+            <span style="color: #4CAF50;">PacketRusher runs directly in the app with real-time logs</span><br>
+            <span style="color: #888; font-size: 10px;">All output is captured and displayed in real-time</span>
+        </div>
+    </div>
+
+    <script>
+        // Minimal client-side JavaScript for WebSocket status updates
+        htmx.on('htmx:wsOpen', function(evt) {
+            document.getElementById('connection-status').textContent = 'Connected to server';
+            document.getElementById('connection-status').className = 'status connected';
+        });
+        
+        htmx.on('htmx:wsClose', function(evt) {
+            document.getElementById('connection-status').textContent = 'Disconnected from server';
+            document.getElementById('connection-status').className = 'status disconnected';
+        });
+        
+        htmx.on('htmx:wsError', function(evt) {
+            document.getElementById('connection-status').textContent = 'Connection error';
+            document.getElementById('connection-status').className = 'status disconnected';
+        });
+
+        // Handle WebSocket messages for real-time log updates
+        htmx.on('htmx:wsAfterMessage', function(evt) {
+            // HTMX will handle the message automatically if it's HTML
+        });
+    </script>
+</body>
+</html> 
