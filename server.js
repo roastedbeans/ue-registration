@@ -113,6 +113,182 @@ function updateNextSessionDisplay() {
 
 // HTMX Routes
 
+// Internal flight data endpoint (returns JSON for server use)
+app.get('/api/flight-data-json', async (req, res) => {
+	try {
+		const now = new Date();
+		const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+		const beginDate = new Date(lastWeek);
+		beginDate.setHours(0, 0, 0, 0);
+
+		const endDate = new Date(lastWeek);
+		endDate.setHours(23, 59, 59, 999);
+
+		const estimatedPassengers = 174;
+
+		const flightModule = await import('./flight.mjs');
+		const arrivalTimestamps = flightModule.flight.map((data) => data.firstSeen || data.lastSeen);
+		const today = new Date();
+
+		const arrivalTimes = arrivalTimestamps
+			.filter((timestamp) => {
+				const date = new Date(timestamp * 1000);
+				return date.getDay() === today.getDay();
+			})
+			.sort((a, b) => a - b)
+			.map((timestamp) => {
+				const date = new Date(timestamp * 1000);
+				const estimatedForeigners = Math.floor(
+					estimatedPassengers * 0.4 + Math.random() * (estimatedPassengers * 0.6 - estimatedPassengers * 0.4)
+				);
+
+				return {
+					time: date.toLocaleTimeString('en-US', { timeZone: 'Asia/Seoul' }),
+					foreignPassengers: estimatedForeigners,
+				};
+			});
+
+		res.json(arrivalTimes);
+	} catch (error) {
+		console.error('Flight data JSON endpoint error:', error);
+		res.status(500).json({ error: error.message, data: [] });
+	}
+});
+
+// Run Multi-UE Session function (restored)
+async function runMultiUeSession(baseIMSI, ueCountForSession, sessionContext = null) {
+	return new Promise(async (resolve) => {
+		const isScheduledRun = typeof sessionContext === 'string';
+
+		// Update connection status
+		const statusHtml = `<div hx-swap-oob="outerHTML:#connection-status">
+			<div id="connection-status" class="status running">Session Running...</div>
+		</div>`;
+
+		wsClients.forEach((ws) => {
+			if (ws.readyState === 1) {
+				ws.send(statusHtml);
+			}
+		});
+
+		if (serverState.baseMsin === null) {
+			const msinPart = baseIMSI.slice(-10);
+			serverState.baseMsin = parseInt(msinPart);
+			serverState.currentMsinBase = serverState.baseMsin;
+			addLog(`Warning: baseMsin not initialized by start(), fallback to: ${msinPart}`);
+		}
+
+		serverState.sessionCount++;
+		const msinDisplay =
+			typeof serverState.currentMsinBase === 'number'
+				? serverState.currentMsinBase.toString().padStart(10, '0')
+				: serverState.currentMsinBase;
+
+		addLog(
+			`Session #${serverState.sessionCount} - Starting ${ueCountForSession} UEs (IMSI base: ${baseIMSI.slice(
+				0,
+				5
+			)}${msinDisplay})`
+		);
+
+		const startMsin = msinDisplay;
+		const endMsinNum =
+			typeof serverState.currentMsinBase === 'number' ? serverState.currentMsinBase + ueCountForSession - 1 : 'N/A';
+		const endMsin = typeof endMsinNum === 'number' ? endMsinNum.toString().padStart(10, '0') : endMsinNum;
+
+		addLog(` UE Range: MSIN ${startMsin} to ${endMsin} (${ueCountForSession} UEs total for this session)`);
+
+		try {
+			const result = await runPacketRusher(serverState.sessionCount, ueCountForSession);
+
+			if (result.success) {
+				addLog(`✅ Session #${serverState.sessionCount} completed successfully`);
+				serverState.totalUeCount += ueCountForSession;
+				if (typeof serverState.currentMsinBase === 'number') {
+					serverState.currentMsinBase += ueCountForSession;
+				}
+			} else {
+				addLog(`Session #${serverState.sessionCount} failed: ${result.error}`);
+			}
+		} catch (e) {
+			addLog(`Session #${serverState.sessionCount} error: ${e.message}`);
+		} finally {
+			if (isScheduledRun) {
+				const sessionToMarkDone = serverState.scheduledSessions.find(
+					(s) => s.ueCount === ueCountForSession && s.originalTimeStr === sessionContext
+				);
+				if (sessionToMarkDone) sessionToMarkDone.isRunning = false;
+			}
+
+			// Update connection status back to connected
+			const connectedStatusHtml = `<div hx-swap-oob="outerHTML:#connection-status">
+				<div id="connection-status" class="status connected">Connected to server</div>
+			</div>`;
+
+			wsClients.forEach((ws) => {
+				if (ws.readyState === 1) {
+					ws.send(connectedStatusHtml);
+				}
+			});
+
+			addLog(`⏱️ Session #${serverState.sessionCount} finished. Total UEs so far: ${serverState.totalUeCount}`);
+
+			if (isScheduledRun) {
+				// Update next session display
+				const nextSessionHtml = updateNextSessionDisplay();
+				const updateHtml = `<div hx-swap-oob="outerHTML:#next-session-info">${nextSessionHtml}</div>`;
+
+				wsClients.forEach((ws) => {
+					if (ws.readyState === 1) {
+						ws.send(updateHtml);
+					}
+				});
+			} else {
+				// For runNow, re-enable start button
+				const buttonsHtml = `<div hx-swap-oob="outerHTML:#control-buttons">
+					<div id="control-buttons">
+						<button class="start"
+								hx-post="/api/sessions/start" 
+								hx-include="[name='mcc'], [name='mnc'], [name='msinBase'], [name='runMode'], [name='ueCountInput']"
+								hx-target="#control-buttons" 
+								hx-swap="outerHTML">
+							Start Sessions
+						</button>
+						<button class="stop" disabled
+								hx-post="/api/sessions/stop" 
+								hx-target="#control-buttons" 
+								hx-swap="outerHTML">
+							Stop / Reset
+						</button>
+						<button class="clear" 
+								hx-post="/api/logs/clear" 
+								hx-target="#logs-container"
+								hx-swap="innerHTML">
+							Clear Logs
+						</button>
+						<button class="get-flight-data" 
+								hx-get="/api/flight-data" 
+								hx-target="#flight-data-display">
+							Get Flight Data
+						</button>
+					</div>
+				</div>`;
+
+				wsClients.forEach((ws) => {
+					if (ws.readyState === 1) {
+						ws.send(buttonsHtml);
+					}
+				});
+
+				serverState.isRunning = false;
+			}
+
+			resolve();
+		}
+	});
+}
+
 // Mode change handler
 app.post('/api/ui/mode-change', (req, res) => {
 	const { runMode } = req.body;
@@ -213,7 +389,7 @@ app.post('/api/sessions/start', async (req, res) => {
 
 		try {
 			// Fetch flight data (reuse existing endpoint logic)
-			const flightResponse = await fetch(`http://localhost:${PORT}/api/flight-data`);
+			const flightResponse = await fetch(`http://localhost:${PORT}/api/flight-data-json`);
 			const flightData = await flightResponse.json();
 
 			if (!flightData || flightData.length === 0) {
@@ -522,6 +698,78 @@ app.get('/api/flight-data', async (req, res) => {
 	}
 });
 
+// Express Routes
+
+// Serve the main HTML page
+app.get('/', (req, res) => {
+	res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+// WebSocket route for HTMX
+app.get('/ws', (req, res) => {
+	// This route is for HTMX WebSocket extension to connect to
+	res.status(200).send('WebSocket endpoint');
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+	res.json({ status: 'OK', timestamp: new Date().toISOString() });
+});
+
+// Start server
+const server = app.listen(PORT, async () => {
+	console.log(`Server running at http://localhost:${PORT}`);
+	console.log(`PacketRusher directory: ${PACKETRUSHER_DIR}`);
+
+	// Check if packetrusher binary exists
+	try {
+		await fs.access(BINARY_PATH);
+		console.log(`\n✓ PacketRusher binary found: ${BINARY_PATH}`);
+		// Check if it's executable
+		try {
+			await fs.access(BINARY_PATH, fsConstants.X_OK);
+			console.log('✓ Binary is executable');
+		} catch (err) {
+			console.log('⚠ Binary may not be executable. Run: chmod +x ../PacketRusher/packetrusher');
+		}
+	} catch (err) {
+		console.error(`\n✗ PacketRusher binary NOT found at: ${BINARY_PATH}`);
+		console.error('Please ensure PacketRusher is built and located in the correct directory');
+	}
+
+	// Check if config.yml exists
+	try {
+		await fs.access(CONFIG_PATH);
+		console.log(`✓ Config file found: ${CONFIG_PATH}`);
+	} catch (err) {
+		console.error(`✗ Config file NOT found at: ${CONFIG_PATH}`);
+		console.error('Please ensure config.yml exists in the PacketRusher config directory');
+	}
+
+	console.log('\n📱 Open http://localhost:3000 in your browser to start using the controller');
+});
+
+// WebSocket Server for HTMX
+const wss = new WebSocket.Server({ server });
+
+wss.on('connection', (ws) => {
+	console.log('New HTMX WebSocket client connected');
+	wsClients.push(ws);
+
+	// Send welcome message as HTML
+	ws.send(`<div hx-swap-oob="afterbegin:#logs">[${formatTime()}] 🔗 Connected to PacketRusher Controller<br></div>`);
+
+	ws.on('close', () => {
+		console.log('HTMX WebSocket client disconnected');
+		wsClients = wsClients.filter((client) => client !== ws);
+	});
+
+	ws.on('error', (error) => {
+		console.error('HTMX WebSocket error:', error);
+		wsClients = wsClients.filter((client) => client !== ws);
+	});
+});
+
 // Run PacketRusher directly in the app
 function runPacketRusher(sessionNumber = 1, ueCount = 1) {
 	return new Promise(async (resolve) => {
@@ -655,75 +903,3 @@ function runPacketRusher(sessionNumber = 1, ueCount = 1) {
 		process.spawnargs.startTime = Date.now();
 	});
 }
-
-// Express Routes
-
-// Serve the main HTML page
-app.get('/', (req, res) => {
-	res.sendFile(path.join(__dirname, 'index.html'));
-});
-
-// WebSocket route for HTMX
-app.get('/ws', (req, res) => {
-	// This route is for HTMX WebSocket extension to connect to
-	res.status(200).send('WebSocket endpoint');
-});
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-	res.json({ status: 'OK', timestamp: new Date().toISOString() });
-});
-
-// Start server
-const server = app.listen(PORT, async () => {
-	console.log(`Server running at http://localhost:${PORT}`);
-	console.log(`PacketRusher directory: ${PACKETRUSHER_DIR}`);
-
-	// Check if packetrusher binary exists
-	try {
-		await fs.access(BINARY_PATH);
-		console.log(`\n✓ PacketRusher binary found: ${BINARY_PATH}`);
-		// Check if it's executable
-		try {
-			await fs.access(BINARY_PATH, fsConstants.X_OK);
-			console.log('✓ Binary is executable');
-		} catch (err) {
-			console.log('⚠ Binary may not be executable. Run: chmod +x ../PacketRusher/packetrusher');
-		}
-	} catch (err) {
-		console.error(`\n✗ PacketRusher binary NOT found at: ${BINARY_PATH}`);
-		console.error('Please ensure PacketRusher is built and located in the correct directory');
-	}
-
-	// Check if config.yml exists
-	try {
-		await fs.access(CONFIG_PATH);
-		console.log(`✓ Config file found: ${CONFIG_PATH}`);
-	} catch (err) {
-		console.error(`✗ Config file NOT found at: ${CONFIG_PATH}`);
-		console.error('Please ensure config.yml exists in the PacketRusher config directory');
-	}
-
-	console.log('\n📱 Open http://localhost:3000 in your browser to start using the controller');
-});
-
-// WebSocket Server for HTMX
-const wss = new WebSocket.Server({ server });
-
-wss.on('connection', (ws) => {
-	console.log('New HTMX WebSocket client connected');
-	wsClients.push(ws);
-
-	// Send welcome message as HTML
-	ws.send(`<div hx-swap-oob="afterbegin:#logs">[${formatTime()}] 🔗 Connected to PacketRusher Controller<br></div>`);
-
-	ws.on('close', () => {
-		console.log('HTMX WebSocket client disconnected');
-		wsClients = wsClients.filter((client) => client !== ws);
-	});
-
-	ws.on('error', (error) => {
-		console.error('HTMX WebSocket error:', error);
-		wsClients = wsClients.filter((client) => client !== ws);
-	});
-});
