@@ -14,6 +14,7 @@ const PORT = 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public')); // For serving static files if needed
 
 // Paths to packetrusher folder (sibling folder)
@@ -310,7 +311,7 @@ app.post('/api/ui/mode-change', (req, res) => {
 	} else {
 		html = `
 			<div id="mode-dependent-ui">
-				<div class="input-group" style="margin-top: 10px;">
+        <div class="input-group" style="margin-top: 10px;">
 					<input type="number" name="ueCountInput" placeholder="Number of UEs (for Run Now)" 
 						   value="1" min="1" max="100">
 				</div>
@@ -592,7 +593,7 @@ app.post('/api/sessions/stop', (req, res) => {
 					hx-target="#flight-data-display">
 				Get Flight Data
 			</button>
-		</div>
+        </div>
 		<div hx-swap-oob="outerHTML:#next-session-info">${nextSessionHtml}</div>
 	`);
 });
@@ -603,14 +604,14 @@ app.post('/api/logs/clear', (req, res) => {
 	serverState.packetrusherLogs = [];
 
 	res.send(`
-		<div class="log-section">
-			<h3>Session Logs</h3>
-			<div id="logs"></div>
-		</div>
-		<div class="log-section">
-			<h3>PacketRusher Output</h3>
-			<div id="packetrusher-logs"></div>
-		</div>
+            <div class="log-section">
+                <h3>Session Logs</h3>
+                <div id="logs"></div>
+            </div>
+            <div class="log-section">
+                <h3>PacketRusher Output</h3>
+                <div id="packetrusher-logs"></div>
+            </div>
 	`);
 });
 
