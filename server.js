@@ -11,11 +11,21 @@ const cors = require('cors');
 const app = express();
 const PORT = 3000;
 
-// Middleware
+// Middleware - Make sure these are in the right order and configured properly
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json()); // For parsing JSON bodies
+app.use(express.urlencoded({ extended: true })); // For parsing URL-encoded bodies
 app.use(express.static('public')); // For serving static files if needed
+
+// Add debugging middleware to log all requests
+app.use((req, res, next) => {
+	console.log(`${req.method} ${req.url}`);
+	console.log('Headers:', req.headers);
+	console.log('Body:', req.body);
+	console.log('Query:', req.query);
+	console.log('---');
+	next();
+});
 
 // Paths to packetrusher folder (sibling folder)
 const PACKETRUSHER_DIR = path.join(__dirname, '..', 'PacketRusher');
@@ -292,6 +302,8 @@ async function runMultiUeSession(baseIMSI, ueCountForSession, sessionContext = n
 
 // Mode change handler
 app.post('/api/ui/mode-change', (req, res) => {
+	console.log('Mode change request body:', req.body);
+
 	const { runMode } = req.body;
 	serverState.currentRunMode = runMode || 'scheduled';
 
@@ -329,31 +341,59 @@ app.post('/api/ui/mode-change', (req, res) => {
 	res.send(html);
 });
 
-// Start sessions handler
+// Start sessions handler - FIXED VERSION
 app.post('/api/sessions/start', async (req, res) => {
-	const { mcc, mnc, msinBase, runMode, ueCountInput } = req.body;
+	console.log('=== START SESSION REQUEST ===');
+	console.log('Request body:', req.body);
+	console.log('Request content-type:', req.headers['content-type']);
+	console.log('Request method:', req.method);
+
+	// Handle both URL-encoded and JSON data
+	let formData = req.body;
+
+	// If req.body is empty, try to parse from raw body (fallback)
+	if (!formData || Object.keys(formData).length === 0) {
+		console.log('Request body is empty, checking if data was sent...');
+		return res.status(400).send(`
+			<div class="status" style="background: #d32f2f; margin: 10px 0;">
+				No form data received. Please ensure all form fields are filled out.
+			</div>
+		`);
+	}
+
+	// Extract data with fallbacks
+	const mcc = formData.mcc || '';
+	const mnc = formData.mnc || '';
+	const msinBase = formData.msinBase || '';
+	const runMode = formData.runMode || 'scheduled';
+	const ueCountInput = formData.ueCountInput || '1';
+
+	console.log('Extracted values:', { mcc, mnc, msinBase, runMode, ueCountInput });
 
 	// Validation
 	if (!mcc || mcc.length !== 3) {
+		console.log('MCC validation failed:', mcc);
 		return res.status(400).send(`
 			<div class="status" style="background: #d32f2f; margin: 10px 0;">
-				Enter a valid 3-character MCC.
+				Enter a valid 3-character MCC. Current value: "${mcc}"
 			</div>
 		`);
 	}
 
 	if (!mnc || mnc.length !== 2) {
+		console.log('MNC validation failed:', mnc);
 		return res.status(400).send(`
 			<div class="status" style="background: #d32f2f; margin: 10px 0;">
-				Enter a valid 2-character MNC.
+				Enter a valid 2-character MNC. Current value: "${mnc}"
 			</div>
 		`);
 	}
 
 	if (!msinBase || msinBase.length !== 10) {
+		console.log('MSIN validation failed:', msinBase);
 		return res.status(400).send(`
 			<div class="status" style="background: #d32f2f; margin: 10px 0;">
-				Enter a valid 10-character Base MSIN.
+				Enter a valid 10-character Base MSIN. Current value: "${msinBase}"
 			</div>
 		`);
 	}
@@ -365,6 +405,7 @@ app.post('/api/sessions/start', async (req, res) => {
 	serverState.totalUeCount = 0;
 
 	const baseIMSI = mcc + mnc + msinBase;
+	console.log('Generated base IMSI:', baseIMSI);
 
 	try {
 		serverState.baseMsin = parseInt(msinBase);
@@ -499,7 +540,7 @@ app.post('/api/sessions/start', async (req, res) => {
 		if (isNaN(ueCount) || ueCount < 1) {
 			return res.status(400).send(`
 				<div class="status" style="background: #d32f2f; margin: 10px 0;">
-					Please enter a valid number of UEs for Run Now mode (1 or more).
+					Please enter a valid number of UEs for Run Now mode (1 or more). Current value: "${ueCountInput}"
 				</div>
 			`);
 		}
