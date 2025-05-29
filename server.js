@@ -333,7 +333,7 @@ const HTML = `
                     totalUeCount += ueCountForSession;
                     currentMsinBase += ueCountForSession;
                 } else {
-                    // log(\`Session #\${sessionCount} failed: \${result.error}\`);
+                    log(\`Session #\${sessionCount} failed: \${result.error}\`);
                 }
                 
             } catch (e) {
