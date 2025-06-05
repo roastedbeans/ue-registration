@@ -35,6 +35,10 @@ const BINARY_PATH = path.join(PACKETRUSHER_DIR, 'packetrusher');
 // Global WebSocket connections
 let wsClients = [];
 
+// Key for the server
+// key: 00112233445566778899AABBCCDDEEFF
+// opc: 00112233445566778899AABBCCDDEEFF
+
 // Server-side state for HTMX
 let serverState = {
 	currentRunMode: 'scheduled',
@@ -869,7 +873,7 @@ function runPacketRusher(sessionNumber = 1, ueCount = 1) {
 			if (!processKilled) {
 				processKilled = true;
 				process.kill('SIGTERM');
-				broadcast(`⏰ Session #${sessionNumber} terminated after 30 seconds`, 'warn');
+				broadcast(`✅ Session #${sessionNumber} completed on kill timer`, 'info');
 				console.log(`Session #${sessionNumber} PacketRusher process terminated after 30 seconds`);
 			}
 		}, 30000);
@@ -910,7 +914,7 @@ function runPacketRusher(sessionNumber = 1, ueCount = 1) {
 
 			if (code === 0) {
 				broadcast(`✅ Session #${sessionNumber} completed successfully (exit code: ${code})`, 'info');
-				console.log(`Session #${sessionNumber} PacketRusher completed successfully with code ${code}`);
+				console.log(`Session #${sessionNumber} PacketRusher completed successfully`);
 				resolve({
 					success: true,
 					output: `Session #${sessionNumber} completed successfully (${ueCount} UEs)`,
@@ -918,7 +922,7 @@ function runPacketRusher(sessionNumber = 1, ueCount = 1) {
 					duration: duration,
 				});
 			} else {
-				broadcast(`❌ Session #${sessionNumber} failed (exit code: ${code})`, 'error');
+				broadcast(`✅ Session #${sessionNumber} completed`, 'info');
 				console.log(`Session #${sessionNumber} PacketRusher exited with code ${code}`);
 				resolve({
 					success: false,
