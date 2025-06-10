@@ -9,7 +9,7 @@ const express = require("express");
 const cors = require("cors");
 
 const app = express();
-const PORT = 3000;
+const PORT = 4000;
 
 // Middleware
 app.use(cors());
@@ -588,7 +588,7 @@ const server = app.listen(PORT, async () => {
   }
 
   console.log(
-    "\n📱 Open http://localhost:3000 in your browser to start using the controller"
+    "\n📱 Open http://localhost:4000 in your browser to start using the controller"
   );
 });
 
