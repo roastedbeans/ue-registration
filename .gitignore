@@ -4,4 +4,7 @@ node_modules/
 # Ignore all files in the dist directory
 dist/
 
+# Ignore PacketRusher directory (third-party dependency)
+PacketRusher/
+
 

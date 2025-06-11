@@ -1,495 +1,480 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <title>PacketRusher Sequential UE Controller</title>
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-    <script src="https://unpkg.com/htmx.org@1.9.10/dist/ext/ws.js"></script>
-    <style>
-      body {
-        font-family: Arial, sans-serif;
-        max-width: 900px;
-        margin: 20px auto;
-        padding: 20px;
-        background: #1a1a1a;
-        color: #e0e0e0;
-        line-height: 1.6;
-      }
-      .container {
-        background: #2a2a2a;
-        padding: 30px;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-      }
-      .form-group-small {
-        max-width: 220px;
-        width: 100%;
-      }
-      .form-group-full {
-        width: 100%;
-      }
-      label {
-        display: block;
-        font-size: 12px;
-        font-weight: bold;
-        color: #4caf50;
-      }
-      input[type="text"],
-      input[type="number"] {
-        width: 100%;
-        padding: 8px;
-        box-sizing: border-box;
-        background: #1a1a1a;
-        border: 2px solid #444;
-        color: #e0e0e0;
-        border-radius: 5px;
-        font-size: 12px;
-        transition: border-color 0.3s;
-      }
-      input[type="text"]:focus,
-      input[type="number"]:focus {
-        outline: none;
-        border-color: #4caf50;
-      }
-      .input-row {
-        display: flex;
-        width: 100%;
-        gap: 8px;
-        margin-bottom: 8px;
-      }
-      .input-row .form-group {
-        flex: 1;
-      }
-      button {
-        padding: 8px 16px;
-        margin: 8px 5px;
-        cursor: pointer;
-        border: none;
-        border-radius: 5px;
-        color: white;
-        font-size: 12px;
-        font-weight: bold;
-        transition: background-color 0.3s, transform 0.1s;
-        min-width: 140px;
-      }
-      button:hover:not(:disabled) {
-        transform: translateY(-1px);
-      }
-      button:active:not(:disabled) {
-        transform: translateY(0);
-      }
-      .start {
-        background: #4caf50;
-      }
-      .start:hover:not(:disabled) {
-        background: #45a049;
-      }
-      .stop {
-        background: #f44336;
-      }
-      .stop:hover:not(:disabled) {
-        background: #da190b;
-      }
-      .clear {
-        background: #ff9800;
-      }
-      .clear:hover:not(:disabled) {
-        background: #e68900;
-      }
-      button:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-        transform: none;
-      }
-      .button-group {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        margin: 20px 0;
-      }
-      .logs-container {
-        display: flex;
-        flex-direction: column;
-        gap: 20px;
-        margin-top: 30px;
-      }
-      .log-section {
-        flex: 1;
-      }
-      .log-section h3 {
-        margin: 0 0 15px 0;
-        color: #4caf50;
-        font-size: 16px;
-        border-bottom: 2px solid #4caf50;
-        padding-bottom: 5px;
-      }
-      #logs,
-      #packetrusher-logs {
-        background: #1a1a1a;
-        padding: 15px;
-        height: 300px;
-        overflow-y: auto;
-        font-family: "Courier New", monospace;
-        font-size: 12px;
-        border-radius: 5px;
-        border: 2px solid #444;
-        white-space: pre-wrap;
-        word-wrap: break-word;
-        scrollbar-gutter: stable;
-      }
-      #packetrusher-logs {
-        background: #0a0a0a;
-        border-color: #4caf50;
-      }
-      .status {
-        padding: 15px;
-        margin: 15px 0;
-        border-radius: 5px;
-        text-align: center;
-        font-weight: bold;
-        font-size: 12px;
-      }
-      .status.connected {
-        background: #2e7d32;
-      }
-      .status.disconnected {
-        background: #d32f2f;
-      }
-      .status.running {
-        background: #f57c00;
-      }
-      .info-section {
-        background: #333;
-        padding: 15px;
-        border-radius: 5px;
-        margin: 20px 0;
-        border-left: 4px solid #4caf50;
-      }
-      .info-section h3 {
-        margin: 0 0 10px 0;
-        color: #4caf50;
-      }
-      .help-text {
-        font-size: 12px;
-        color: #888;
-        font-style: italic;
-      }
-      .htmx-indicator {
-        opacity: 0;
-        transition: opacity 500ms ease-in;
-      }
-      .htmx-request .htmx-indicator {
-        opacity: 1;
-      }
-      .htmx-request.htmx-indicator {
-        opacity: 1;
-      }
-      /* Scrollbar styling */
-      #logs::-webkit-scrollbar,
-      #packetrusher-logs::-webkit-scrollbar {
-        width: 8px;
-      }
-      #logs::-webkit-scrollbar-track,
-      #packetrusher-logs::-webkit-scrollbar-track {
-        background: #2a2a2a;
-      }
-      #logs::-webkit-scrollbar-thumb,
-      #packetrusher-logs::-webkit-scrollbar-thumb {
-        background: #4caf50;
-        border-radius: 4px;
-      }
-      #logs::-webkit-scrollbar-thumb:hover,
-      #packetrusher-logs::-webkit-scrollbar-thumb:hover {
-        background: #45a049;
-      }
-    </style>
-  </head>
-  <body hx-ext="ws" ws-connect="/ws">
-    <div class="container">
-      <h1>📡 PacketRusher Sequential UE Controller</h1>
+	<head>
+		<title>PacketRusher Sequential UE Controller</title>
+		<script src="https://unpkg.com/htmx.org@1.9.10"></script>
+		<script src="https://unpkg.com/htmx.org@1.9.10/dist/ext/ws.js"></script>
+		<style>
+			body {
+				font-family: Arial, sans-serif;
+				max-width: 900px;
+				margin: 20px auto;
+				padding: 20px;
+				background: #1a1a1a;
+				color: #e0e0e0;
+				line-height: 1.6;
+			}
+			.container {
+				background: #2a2a2a;
+				padding: 30px;
+				border-radius: 10px;
+				box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+			}
+			.form-group-small {
+				max-width: 220px;
+				width: 100%;
+			}
+			.form-group-full {
+				width: 100%;
+			}
+			label {
+				display: block;
+				font-size: 12px;
+				font-weight: bold;
+				color: #4caf50;
+			}
+			input[type='text'],
+			input[type='number'] {
+				width: 100%;
+				padding: 8px;
+				box-sizing: border-box;
+				background: #1a1a1a;
+				border: 2px solid #444;
+				color: #e0e0e0;
+				border-radius: 5px;
+				font-size: 12px;
+				transition: border-color 0.3s;
+			}
+			input[type='text']:focus,
+			input[type='number']:focus {
+				outline: none;
+				border-color: #4caf50;
+			}
+			.input-row {
+				display: flex;
+				width: 100%;
+				gap: 8px;
+				margin-bottom: 8px;
+			}
+			.input-row .form-group {
+				flex: 1;
+			}
+			button {
+				padding: 8px 16px;
+				margin: 8px 5px;
+				cursor: pointer;
+				border: none;
+				border-radius: 5px;
+				color: white;
+				font-size: 12px;
+				font-weight: bold;
+				transition: background-color 0.3s, transform 0.1s;
+				min-width: 140px;
+			}
+			button:hover:not(:disabled) {
+				transform: translateY(-1px);
+			}
+			button:active:not(:disabled) {
+				transform: translateY(0);
+			}
+			.start {
+				background: #4caf50;
+			}
+			.start:hover:not(:disabled) {
+				background: #45a049;
+			}
+			.stop {
+				background: #f44336;
+			}
+			.stop:hover:not(:disabled) {
+				background: #da190b;
+			}
+			.clear {
+				background: #ff9800;
+			}
+			.clear:hover:not(:disabled) {
+				background: #e68900;
+			}
+			button:disabled {
+				opacity: 0.5;
+				cursor: not-allowed;
+				transform: none;
+			}
+			.button-group {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 10px;
+				margin: 20px 0;
+			}
+			.logs-container {
+				display: flex;
+				flex-direction: column;
+				gap: 20px;
+				margin-top: 30px;
+			}
+			.log-section {
+				flex: 1;
+			}
+			.log-section h3 {
+				margin: 0 0 15px 0;
+				color: #4caf50;
+				font-size: 16px;
+				border-bottom: 2px solid #4caf50;
+				padding-bottom: 5px;
+			}
+			#logs,
+			#packetrusher-logs {
+				background: #1a1a1a;
+				padding: 15px;
+				height: 300px;
+				overflow-y: auto;
+				font-family: 'Courier New', monospace;
+				font-size: 12px;
+				border-radius: 5px;
+				border: 2px solid #444;
+				white-space: pre-wrap;
+				word-wrap: break-word;
+				scrollbar-gutter: stable;
+			}
+			#packetrusher-logs {
+				background: #0a0a0a;
+				border-color: #4caf50;
+			}
+			.status {
+				padding: 15px;
+				margin: 15px 0;
+				border-radius: 5px;
+				text-align: center;
+				font-weight: bold;
+				font-size: 12px;
+			}
+			.status.connected {
+				background: #2e7d32;
+			}
+			.status.disconnected {
+				background: #d32f2f;
+			}
+			.status.running {
+				background: #f57c00;
+			}
+			.info-section {
+				background: #333;
+				padding: 15px;
+				border-radius: 5px;
+				margin: 20px 0;
+				border-left: 4px solid #4caf50;
+			}
+			.info-section h3 {
+				margin: 0 0 10px 0;
+				color: #4caf50;
+			}
+			.help-text {
+				font-size: 12px;
+				color: #888;
+				font-style: italic;
+			}
+			.htmx-indicator {
+				opacity: 0;
+				transition: opacity 500ms ease-in;
+			}
+			.htmx-request .htmx-indicator {
+				opacity: 1;
+			}
+			.htmx-request.htmx-indicator {
+				opacity: 1;
+			}
+			/* Scrollbar styling */
+			#logs::-webkit-scrollbar,
+			#packetrusher-logs::-webkit-scrollbar {
+				width: 8px;
+			}
+			#logs::-webkit-scrollbar-track,
+			#packetrusher-logs::-webkit-scrollbar-track {
+				background: #2a2a2a;
+			}
+			#logs::-webkit-scrollbar-thumb,
+			#packetrusher-logs::-webkit-scrollbar-thumb {
+				background: #4caf50;
+				border-radius: 4px;
+			}
+			#logs::-webkit-scrollbar-thumb:hover,
+			#packetrusher-logs::-webkit-scrollbar-thumb:hover {
+				background: #45a049;
+			}
+		</style>
+	</head>
+	<body
+		hx-ext="ws"
+		ws-connect="/ws">
+		<div class="container">
+			<h1>📡 PacketRusher Sequential UE Controller</h1>
 
-      <div id="connection-status" class="status disconnected">
-        Connecting to server...
-      </div>
+			<div
+				id="connection-status"
+				class="status disconnected">
+				Connecting to server...
+			</div>
 
-      <div class="info-section">
-        <h3>How It Works</h3>
-        <p>
-          This controller runs UEs sequentially, one after another. Each UE
-          starts with an incremented MSIN value.
-        </p>
-      </div>
-      <form id="ue-form">
-        <h5>UE Configuration</h5>
-        <div class="input-row">
-          <div class="form-group-small">
-            <label for="mcc">MCC (Mobile Country Code)</label>
-            <input
-              type="text"
-              name="mcc"
-              id="mcc"
-              placeholder="001"
-              maxlength="3"
-              value="001"
-              required
-            />
-            <div class="help-text">3 digits (e.g., 001 for test network)</div>
-          </div>
-          <div class="form-group-small">
-            <label for="mnc">MNC (Mobile Network Code)</label>
-            <input
-              type="text"
-              name="mnc"
-              id="mnc"
-              placeholder="01"
-              maxlength="2"
-              value="01"
-              required
-            />
-            <div class="help-text">2 digits (e.g., 01 for test network)</div>
-          </div>
-          <div class="form-group-small">
-            <label for="msinBase">Starting MSIN (Mobile Subscriber)</label>
-            <input
-              type="text"
-              name="msinBase"
-              id="msinBase"
-              placeholder="0000000001"
-              maxlength="10"
-              value="0000000001"
-              required
-            />
-            <div class="help-text">
-              10 digits - this will be the MSIN for the first UE
-            </div>
-          </div>
-          <div class="form-group-small">
-            <label for="ueCount">Number of UEs to Run</label>
-            <input
-              type="number"
-              name="ueCount"
-              id="ueCount"
-              placeholder="5"
-              min="1"
-              max="100000"
-              value="5"
-              required
-            />
-            <div class="help-text">
-              How many UEs to run sequentially (1-100000)
-            </div>
-          </div>
-        </div>
-        <h5>PLMN Configuration</h5>
-        <div class="input-row">
-          <div class="form-group-small">
-            <label for="plmnmcc">MCC (Mobile Country Code)</label>
-            <input
-              type="text"
-              name="plmnmcc"
-              id="plmnmcc"
-              placeholder="999"
-              maxlength="3"
-              value="999"
-              required
-            />
-            <div class="help-text">
-              3 digits (e.g., 999 for visited network)
-            </div>
-          </div>
-          <div class="form-group-small">
-            <label for="plmnmnc">MNC (Mobile Network Code)</label>
-            <input
-              type="text"
-              name="plmnmnc"
-              id="plmnmnc"
-              placeholder="70"
-              maxlength="2"
-              value="70"
-              required
-            />
-            <div class="help-text">2 digits (e.g., 70 for visited network)</div>
-          </div>
-          <div class="form-group-small">
-            <label for="amfIP">AMF IP Address</label>
-            <input
-              type="text"
-              name="amfIP"
-              id="amfIP"
-              placeholder="192.168.0.104"
-              value="192.168.0.104"
-              required
-            />
-            <div class="help-text">Check and modify AMF IP address</div>
-          </div>
-          <div class="form-group-small">
-            <label for="amfPort">AMF Port</label>
-            <input
-              type="number"
-              name="amfPort"
-              id="amfPort"
-              placeholder="31412"
-              value="31412"
-              required
-            />
-            <div class="help-text">AMF port number (default is 31412)</div>
-          </div>
-        </div>
-      </form>
+			<div class="info-section">
+				<h3>How It Works</h3>
+				<p>This controller runs UEs sequentially, one after another. Each UE starts with an incremented MSIN value.</p>
+			</div>
+			<form id="ue-form">
+				<h5>UE Configuration</h5>
+				<div class="input-row">
+					<div class="form-group-small">
+						<label for="mcc">MCC (Mobile Country Code)</label>
+						<input
+							type="text"
+							name="mcc"
+							id="mcc"
+							placeholder="001"
+							maxlength="3"
+							value="001"
+							required />
+						<div class="help-text">3 digits (e.g., 001 for test network)</div>
+					</div>
+					<div class="form-group-small">
+						<label for="mnc">MNC (Mobile Network Code)</label>
+						<input
+							type="text"
+							name="mnc"
+							id="mnc"
+							placeholder="01"
+							maxlength="2"
+							value="01"
+							required />
+						<div class="help-text">2 digits (e.g., 01 for test network)</div>
+					</div>
+					<div class="form-group-small">
+						<label for="msinBase">Starting MSIN (Mobile Subscriber)</label>
+						<input
+							type="text"
+							name="msinBase"
+							id="msinBase"
+							placeholder="0000000001"
+							maxlength="10"
+							value="0000000001"
+							required />
+						<div class="help-text">10 digits - this will be the MSIN for the first UE</div>
+					</div>
+					<div class="form-group-small">
+						<label for="ueCount">Number of UEs to Run</label>
+						<input
+							type="number"
+							name="ueCount"
+							id="ueCount"
+							placeholder="5"
+							min="1"
+							max="100000"
+							value="5"
+							required />
+						<div class="help-text">How many UEs to run sequentially (1-100000)</div>
+					</div>
+				</div>
+				<h5>PLMN Configuration</h5>
+				<div class="input-row">
+					<div class="form-group-small">
+						<label for="plmnmcc">MCC (Mobile Country Code)</label>
+						<input
+							type="text"
+							name="plmnmcc"
+							id="plmnmcc"
+							placeholder="999"
+							maxlength="3"
+							value="999"
+							required />
+						<div class="help-text">3 digits (e.g., 999 for visited network)</div>
+					</div>
+					<div class="form-group-small">
+						<label for="plmnmnc">MNC (Mobile Network Code)</label>
+						<input
+							type="text"
+							name="plmnmnc"
+							id="plmnmnc"
+							placeholder="70"
+							maxlength="2"
+							value="70"
+							required />
+						<div class="help-text">2 digits (e.g., 70 for visited network)</div>
+					</div>
+					<div class="form-group-small">
+						<label for="amfIP">AMF IP Address</label>
+						<input
+							type="text"
+							name="amfIP"
+							id="amfIP"
+							placeholder="192.168.0.104"
+							value="192.168.0.104"
+							required />
+						<div class="help-text">Check and modify AMF IP address</div>
+					</div>
+					<div class="form-group-small">
+						<label for="amfPort">AMF Port</label>
+						<input
+							type="number"
+							name="amfPort"
+							id="amfPort"
+							placeholder="31412"
+							value="31412"
+							required />
+						<div class="help-text">AMF port number (default is 31412)</div>
+					</div>
+				</div>
+			</form>
 
-      <div id="control-buttons" class="button-group">
-        <button
-          class="start"
-          hx-post="/api/sessions/start"
-          hx-include="#ue-form"
-          hx-target="#control-buttons"
-          hx-swap="outerHTML"
-        >
-          🚀 Start UE Sessions
-          <span class="htmx-indicator">...</span>
-        </button>
-        <button
-          class="stop"
-          disabled
-          hx-post="/api/sessions/stop"
-          hx-target="#control-buttons"
-          hx-swap="outerHTML"
-        >
-          ⏹️ Stop Sessions
-        </button>
-        <button
-          class="clear"
-          hx-post="/api/logs/clear"
-          hx-target="#logs-container"
-          hx-swap="innerHTML"
-        >
-          🗑️ Clear Logs
-        </button>
-      </div>
+			<div
+				id="control-buttons"
+				class="button-group">
+				<button
+					class="start"
+					hx-post="/api/sessions/start"
+					hx-include="#ue-form"
+					hx-target="#control-buttons"
+					hx-swap="outerHTML">
+					🚀 Start UE Sessions
+					<span class="htmx-indicator">...</span>
+				</button>
+				<button
+					class="stop"
+					disabled
+					hx-post="/api/sessions/stop"
+					hx-target="#control-buttons"
+					hx-swap="outerHTML">
+					⏹️ Stop Sessions
+				</button>
+				<button
+					class="clear"
+					hx-post="/api/logs/clear"
+					hx-target="#logs-container"
+					hx-swap="innerHTML">
+					🗑️ Clear Logs
+				</button>
+			</div>
 
-      <div
-        id="progress-info"
-        class="status"
-        style="background: #007bff; display: none"
-      >
-        Progress: 0/0 | Current MSIN: N/A
-      </div>
+			<div
+				id="progress-info"
+				class="status"
+				style="background: #007bff; display: none">
+				Progress: 0/0 | Current MSIN: N/A
+			</div>
 
-      <div id="logs-container" class="logs-container">
-        <div class="log-section">
-          <h3>📋 Session Logs</h3>
-          <div id="logs"></div>
-        </div>
-        <div class="log-section">
-          <h3>🔧 PacketRusher Output</h3>
-          <div id="packetrusher-logs"></div>
-        </div>
-      </div>
+			<div
+				id="logs-container"
+				class="logs-container">
+				<div class="log-section">
+					<h3>📋 Session Logs</h3>
+					<div id="logs"></div>
+				</div>
+				<div class="log-section">
+					<h3>🔧 PacketRusher Output</h3>
+					<div id="packetrusher-logs"></div>
+				</div>
+			</div>
 
-      <div class="info-section" style="margin-top: 30px">
-        <h3>📁 File Paths</h3>
-        <p><strong>Config:</strong> ../PacketRusher/config/config.yml</p>
-        <p><strong>Binary:</strong> ../PacketRusher/packetrusher</p>
-        <p style="color: #4caf50; margin-top: 10px">
-          ✅ PacketRusher runs directly with real-time output capture
-        </p>
-      </div>
-    </div>
+			<div
+				class="info-section"
+				style="margin-top: 30px">
+				<h3>📁 File Paths</h3>
+				<p><strong>Config:</strong> ./PacketRusher/config/config.yml</p>
+				<p><strong>Binary:</strong> ./PacketRusher/packetrusher</p>
+				<p style="color: #4caf50; margin-top: 10px">✅ PacketRusher runs directly with real-time output capture</p>
+			</div>
+		</div>
 
-    <script>
-      // WebSocket connection status handlers
-      htmx.on("htmx:wsOpen", function (evt) {
-        const statusEl = document.getElementById("connection-status");
-        statusEl.textContent = "✅ Connected to server";
-        statusEl.className = "status connected";
-      });
+		<script>
+			// WebSocket connection status handlers
+			htmx.on('htmx:wsOpen', function (evt) {
+				const statusEl = document.getElementById('connection-status');
+				statusEl.textContent = '✅ Connected to server';
+				statusEl.className = 'status connected';
+			});
 
-      htmx.on("htmx:wsClose", function (evt) {
-        const statusEl = document.getElementById("connection-status");
-        statusEl.textContent = "❌ Disconnected from server";
-        statusEl.className = "status disconnected";
-      });
+			htmx.on('htmx:wsClose', function (evt) {
+				const statusEl = document.getElementById('connection-status');
+				statusEl.textContent = '❌ Disconnected from server';
+				statusEl.className = 'status disconnected';
+			});
 
-      htmx.on("htmx:wsError", function (evt) {
-        const statusEl = document.getElementById("connection-status");
-        statusEl.textContent = "⚠️ Connection error";
-        statusEl.className = "status disconnected";
-      });
+			htmx.on('htmx:wsError', function (evt) {
+				const statusEl = document.getElementById('connection-status');
+				statusEl.textContent = '⚠️ Connection error';
+				statusEl.className = 'status disconnected';
+			});
 
-      // Auto-scroll logs to bottom when new content arrives
-      function autoScrollLogs() {
-        const sessionLogs = document.getElementById("logs");
-        const packetrusherLogs = document.getElementById("packetrusher-logs");
+			// Auto-scroll logs to bottom when new content arrives
+			function autoScrollLogs() {
+				const sessionLogs = document.getElementById('logs');
+				const packetrusherLogs = document.getElementById('packetrusher-logs');
 
-        if (sessionLogs) {
-          sessionLogs.scrollTop = 0;
-        }
-        if (packetrusherLogs) {
-          packetrusherLogs.scrollTop = 0;
-        }
-      }
+				if (sessionLogs) {
+					sessionLogs.scrollTop = 0;
+				}
+				if (packetrusherLogs) {
+					packetrusherLogs.scrollTop = 0;
+				}
+			}
 
-      // Listen for HTMX after request to scroll logs
-      htmx.on("htmx:afterRequest", autoScrollLogs);
-      htmx.on("htmx:wsAfterMessage", autoScrollLogs);
+			// Listen for HTMX after request to scroll logs
+			htmx.on('htmx:afterRequest', autoScrollLogs);
+			htmx.on('htmx:wsAfterMessage', autoScrollLogs);
 
-      // Form validation
-      document
-        .getElementById("ue-form")
-        .addEventListener("input", function (e) {
-          const target = e.target;
+			// Form validation
+			document.getElementById('ue-form').addEventListener('input', function (e) {
+				const target = e.target;
 
-          // MCC validation (3 digits)
-          if (target.name === "mcc") {
-            target.value = target.value.replace(/\D/g, "").substring(0, 3);
-          }
+				// MCC validation (3 digits)
+				if (target.name === 'mcc') {
+					target.value = target.value.replace(/\D/g, '').substring(0, 3);
+				}
 
-          // MNC validation (2 digits)
-          if (target.name === "mnc") {
-            target.value = target.value.replace(/\D/g, "").substring(0, 2);
-          }
+				// MNC validation (2 digits)
+				if (target.name === 'mnc') {
+					target.value = target.value.replace(/\D/g, '').substring(0, 2);
+				}
 
-          // MSIN validation (10 digits)
-          if (target.name === "msinBase") {
-            target.value = target.value.replace(/\D/g, "").substring(0, 10);
-          }
+				// MSIN validation (10 digits)
+				if (target.name === 'msinBase') {
+					target.value = target.value.replace(/\D/g, '').substring(0, 10);
+				}
 
-          // PLMN MCC validation (3 digits)
-          if (target.name === "plmnmcc") {
-            target.value = target.value.replace(/\D/g, "").substring(0, 3);
-          }
-          // PLMN MNC validation (2 digits)
-          if (target.name === "plmnmnc") {
-            target.value = target.value.replace(/\D/g, "").substring(0, 2);
-          }
-          // AMF IP validation (basic format)
-          if (target.name === "amfIP") {
-            target.value = target.value.replace(/[^0-9.]/g, ""); // Allow only digits and dots
-          }
-          // AMF Port validation (numeric)
-          if (target.name === "amfPort") {
-            target.value = target.value.replace(/\D/g, ""); // Allow only digits
-            const port = parseInt(target.value, 10);
-            if (port < 1 || port > 65535) {
-              target.value = ""; // Reset if out of range
-            }
-          }
-        });
+				// PLMN MCC validation (3 digits)
+				if (target.name === 'plmnmcc') {
+					target.value = target.value.replace(/\D/g, '').substring(0, 3);
+				}
+				// PLMN MNC validation (2 digits)
+				if (target.name === 'plmnmnc') {
+					target.value = target.value.replace(/\D/g, '').substring(0, 2);
+				}
+				// AMF IP validation (basic format)
+				if (target.name === 'amfIP') {
+					target.value = target.value.replace(/[^0-9.]/g, ''); // Allow only digits and dots
+				}
+				// AMF Port validation (numeric)
+				if (target.name === 'amfPort') {
+					target.value = target.value.replace(/\D/g, ''); // Allow only digits
+					const port = parseInt(target.value, 10);
+					if (port < 1 || port > 65535) {
+						target.value = ''; // Reset if out of range
+					}
+				}
+			});
 
-      // Update progress info visibility
-      function updateProgressVisibility() {
-        const progressInfo = document.getElementById("progress-info");
-        const isRunning =
-          progressInfo &&
-          progressInfo.textContent.includes("Current MSIN:") &&
-          !progressInfo.textContent.includes("N/A");
+			// Update progress info visibility
+			function updateProgressVisibility() {
+				const progressInfo = document.getElementById('progress-info');
+				const isRunning =
+					progressInfo &&
+					progressInfo.textContent.includes('Current MSIN:') &&
+					!progressInfo.textContent.includes('N/A');
 
-        if (progressInfo) {
-          progressInfo.style.display = isRunning ? "block" : "none";
-        }
-      }
+				if (progressInfo) {
+					progressInfo.style.display = isRunning ? 'block' : 'none';
+				}
+			}
 
-      // Monitor for progress updates
-      setInterval(updateProgressVisibility, 1000);
-    </script>
-  </body>
+			// Monitor for progress updates
+			setInterval(updateProgressVisibility, 1000);
+		</script>
+	</body>
 </html>
