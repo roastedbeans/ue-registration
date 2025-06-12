@@ -105,14 +105,44 @@ setup_packetrusher() {
     local packetrusher_dir="$current_dir/PacketRusher"
     
     # Clone PacketRusher if it doesn't exist
+    print_status "Checking for PacketRusher directory: $packetrusher_dir"
+    print_status "Current working directory: $current_dir"
+    
     if [[ ! -d "$packetrusher_dir" ]]; then
-        print_status "Cloning PacketRusher repository..."
-        sudo -u "$actual_user" git clone https://github.com/HewlettPackard/PacketRusher "$packetrusher_dir"
+        print_status "PacketRusher directory not found, cloning repository..."
+        print_status "Cloning to: $packetrusher_dir"
+        print_status "Running as user: $actual_user"
+        
+        if sudo -u "$actual_user" git clone https://github.com/HewlettPackard/PacketRusher "$packetrusher_dir"; then
+            print_success "PacketRusher cloned successfully"
+        else
+            print_error "Failed to clone PacketRusher repository"
+            print_error "Please check internet connection and git installation"
+            exit 1
+        fi
+        
+        # Verify the clone was successful
+        if [[ ! -d "$packetrusher_dir" ]]; then
+            print_error "PacketRusher directory still not found after clone attempt"
+            exit 1
+        fi
     else
         print_status "PacketRusher directory already exists, updating..."
-        cd "$packetrusher_dir"
-        sudo -u "$actual_user" git pull
-        cd "$current_dir"
+        cd "$packetrusher_dir" || {
+            print_error "Failed to enter PacketRusher directory"
+            exit 1
+        }
+        
+        if sudo -u "$actual_user" git pull; then
+            print_success "PacketRusher updated successfully"
+        else
+            print_warning "Failed to update PacketRusher (continuing anyway)"
+        fi
+        
+        cd "$current_dir" || {
+            print_error "Failed to return to original directory"
+            exit 1
+        }
     fi
     
     # Add PACKETRUSHER environment variable to .profile
@@ -135,6 +165,39 @@ setup_packetrusher() {
         print_success "Custom config.yml copied successfully"
     else
         print_warning "No custom config.yml found in root directory, using PacketRusher's default"
+    fi
+    
+    # Final verification
+    print_status "Verifying PacketRusher installation..."
+    if [[ -d "$packetrusher_dir" ]]; then
+        print_success "✓ PacketRusher directory exists: $packetrusher_dir"
+        
+        # Check key directories
+        if [[ -d "$packetrusher_dir/cmd" ]]; then
+            print_success "✓ cmd directory found"
+        else
+            print_warning "✗ cmd directory missing"
+        fi
+        
+        if [[ -d "$packetrusher_dir/lib/gtp5g" ]]; then
+            print_success "✓ gtp5g directory found"
+        else
+            print_warning "✗ gtp5g directory missing"
+        fi
+        
+        if [[ -f "$packetrusher_dir/go.mod" ]]; then
+            print_success "✓ go.mod file found"
+        else
+            print_warning "✗ go.mod file missing"
+        fi
+        
+        # List contents for debugging
+        print_status "PacketRusher directory contents:"
+        ls -la "$packetrusher_dir" | head -10
+        
+    else
+        print_error "✗ PacketRusher directory not found after setup!"
+        exit 1
     fi
     
     print_success "PacketRusher repository setup completed"
