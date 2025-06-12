@@ -208,12 +208,23 @@ build_packetrusher_cli() {
     
     # Set up Go environment
     export PATH=$PATH:/usr/local/go/bin
+    export GOPATH="$actual_home/go"
+    export GOCACHE="$actual_home/.cache/go-build"
+    
+    # Clean up any existing Go cache with wrong permissions
+    print_status "Cleaning up existing Go cache directories..."
+    rm -rf "$actual_home/go" "$actual_home/.cache/go-build" 2>/dev/null || true
+    
+    # Create Go directories with proper ownership
+    print_status "Setting up Go cache directories..."
+    mkdir -p "$GOPATH" "$GOCACHE"
+    chown -R "$actual_user:$actual_user" "$GOPATH" "$GOCACHE" 2>/dev/null || true
     
     print_status "Downloading Go modules..."
-    sudo -u "$actual_user" -E /usr/local/go/bin/go mod download
+    sudo -u "$actual_user" env PATH="$PATH" GOPATH="$GOPATH" GOCACHE="$GOCACHE" /usr/local/go/bin/go mod download
     
     print_status "Building PacketRusher binary..."
-    sudo -u "$actual_user" -E /usr/local/go/bin/go build cmd/packetrusher.go
+    sudo -u "$actual_user" env PATH="$PATH" GOPATH="$GOPATH" GOCACHE="$GOCACHE" /usr/local/go/bin/go build cmd/packetrusher.go
     
     # Make the binary executable
     chmod +x packetrusher
