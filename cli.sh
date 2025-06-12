@@ -150,17 +150,34 @@ build_gtp5g() {
     local packetrusher_dir="$current_dir/PacketRusher"
     local gtp5g_dir="$packetrusher_dir/lib/gtp5g"
     
+    print_status "Checking gtp5g directory: $gtp5g_dir"
+    
     if [[ ! -d "$gtp5g_dir" ]]; then
         print_error "gtp5g directory not found at $gtp5g_dir"
+        print_error "Current working directory: $(pwd)"
+        print_error "PacketRusher directory: $packetrusher_dir"
         exit 1
     fi
     
-    cd "$gtp5g_dir"
+    print_status "Entering gtp5g directory..."
+    cd "$gtp5g_dir" || {
+        print_error "Failed to change to gtp5g directory: $gtp5g_dir"
+        exit 1
+    }
     
     # Clean, build, and install
+    print_status "Running make clean..."
     make clean
+    print_status "Running make..."
     make
+    print_status "Running make install..."
     make install
+    
+    # Return to original directory
+    cd "$current_dir" || {
+        print_error "Failed to return to original directory: $current_dir"
+        exit 1
+    }
     
     print_success "gtp5g kernel module built and installed successfully"
     print_warning "Note: Make sure Secure Boot is disabled if you encounter issues with the kernel module"
@@ -175,18 +192,38 @@ build_packetrusher_cli() {
     local current_dir=$(pwd)
     local packetrusher_dir="$current_dir/PacketRusher"
     
-    cd "$packetrusher_dir"
+    print_status "Checking PacketRusher directory: $packetrusher_dir"
+    
+    if [[ ! -d "$packetrusher_dir" ]]; then
+        print_error "PacketRusher directory not found at $packetrusher_dir"
+        print_error "Current working directory: $(pwd)"
+        exit 1
+    fi
+    
+    print_status "Entering PacketRusher directory..."
+    cd "$packetrusher_dir" || {
+        print_error "Failed to change to PacketRusher directory: $packetrusher_dir"
+        exit 1
+    }
     
     # Set up Go environment
     export PATH=$PATH:/usr/local/go/bin
     
-    # Download Go modules and build
+    print_status "Downloading Go modules..."
     sudo -u "$actual_user" -E /usr/local/go/bin/go mod download
+    
+    print_status "Building PacketRusher binary..."
     sudo -u "$actual_user" -E /usr/local/go/bin/go build cmd/packetrusher.go
     
     # Make the binary executable
     chmod +x packetrusher
     chown "$actual_user:$actual_user" packetrusher
+    
+    # Return to original directory
+    cd "$current_dir" || {
+        print_error "Failed to return to original directory: $current_dir"
+        exit 1
+    }
     
     print_success "PacketRusher CLI built successfully"
     print_status "Testing PacketRusher CLI..."
