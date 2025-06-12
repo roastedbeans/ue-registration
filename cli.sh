@@ -68,9 +68,13 @@ install_go() {
     
     local actual_home=$(get_actual_home)
     local actual_user=$(get_actual_user)
+    local original_dir=$(pwd)
     
     # Download Go
-    cd /tmp
+    cd /tmp || {
+        print_error "Failed to change to /tmp directory"
+        exit 1
+    }
     wget https://go.dev/dl/go1.24.1.linux-amd64.tar.gz
     
     # Remove existing Go installation and install new one
@@ -91,6 +95,12 @@ install_go() {
     
     # Clean up
     rm -f go1.24.1.linux-amd64.tar.gz
+    
+    # Return to original directory
+    cd "$original_dir" || {
+        print_error "Failed to return to original directory: $original_dir"
+        exit 1
+    }
     
     print_success "Go 1.24.1 installed successfully"
 }
