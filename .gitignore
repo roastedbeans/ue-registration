@@ -4,4 +4,7 @@ node_modules/
 # Ignore all files in the dist directory
 dist/
 
+PacketRusher/*
+
+package-lock.json
 
