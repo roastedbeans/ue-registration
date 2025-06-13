@@ -45,8 +45,6 @@ let serverState = {
 	mnc: null,
 	plmnmcc: null,
 	plmnmnc: null,
-	amfIP: null,
-	amfPort: null,
 	sessionLogs: [],
 	packetrusherLogs: [],
 	sessionAborted: false,
@@ -116,8 +114,8 @@ function updateProgressDisplay() {
 	});
 }
 
-// Function to update config with new MSIN and PLMN/AMF settings
-async function updateConfig(msin, plmnmcc, plmnmnc, amfIP, amfPort) {
+// Function to update config with new MSIN and PLMN settings
+async function updateConfig(msin, plmnmcc, plmnmnc) {
 	try {
 		const configContent = await fs.readFile(CONFIG_PATH, 'utf8');
 		const config = yaml.load(configContent);
@@ -135,18 +133,6 @@ async function updateConfig(msin, plmnmcc, plmnmnc, amfIP, amfPort) {
 			if (!config.gnodeb.plmnlist) config.gnodeb.plmnlist = {};
 			config.gnodeb.plmnlist.mcc = plmnmcc;
 			config.gnodeb.plmnlist.mnc = plmnmnc;
-		}
-
-		// Update AMF configuration if provided
-		if (amfIP && amfPort) {
-			if (!Array.isArray(config.amfif)) {
-				config.amfif = [{ ip: amfIP, port: parseInt(amfPort) }];
-			} else {
-				config.amfif[0] = {
-					ip: amfIP,
-					port: parseInt(amfPort),
-				};
-			}
 		}
 
 		// Write config back
@@ -252,13 +238,7 @@ async function runSequentialUEs() {
 		updateProgressDisplay();
 
 		// Update config with current MSIN and other parameters
-		const configUpdated = await updateConfig(
-			serverState.currentMsin,
-			serverState.plmnmcc,
-			serverState.plmnmnc,
-			serverState.amfIP,
-			serverState.amfPort
-		);
+		const configUpdated = await updateConfig(serverState.currentMsin, serverState.plmnmcc, serverState.plmnmnc);
 		if (!configUpdated) {
 			addLog(`Failed to update config for UE #${i}, stopping session`);
 			break;
@@ -297,7 +277,7 @@ async function runSequentialUEs() {
 		<div id="control-buttons">
 			<button class="start"
 					hx-post="/api/sessions/start" 
-					hx-include="[name='mcc'], [name='mnc'], [name='msinBase'], [name='ueCount'], [name='plmnmcc'], [name='plmnmnc'], [name='amfIP'], [name='amfPort']"
+					hx-include="[name='mcc'], [name='mnc'], [name='msinBase'], [name='ueCount'], [name='plmnmcc'], [name='plmnmnc']"
 					hx-target="#control-buttons" 
 					hx-swap="outerHTML">
 				Start UE Sessions
@@ -324,13 +304,6 @@ async function runSequentialUEs() {
 	});
 }
 
-// Validation functions
-function validateIP(ip) {
-	const ipRegex =
-		/^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
-	return ipRegex.test(ip);
-}
-
 // Start sessions handler
 app.post('/api/sessions/start', async (req, res) => {
 	console.log('=== START SESSION REQUEST ===');
@@ -353,8 +326,6 @@ app.post('/api/sessions/start', async (req, res) => {
 	const ueCount = parseInt(formData.ueCount) || 1;
 	const plmnmcc = formData.plmnmcc || '';
 	const plmnmnc = formData.plmnmnc || '';
-	const amfIP = formData.amfIP || '';
-	const amfPort = formData.amfPort || '';
 
 	console.log('Extracted values:', {
 		mcc,
@@ -363,8 +334,6 @@ app.post('/api/sessions/start', async (req, res) => {
 		ueCount,
 		plmnmcc,
 		plmnmnc,
-		amfIP,
-		amfPort,
 	});
 
 	// Comprehensive validation
@@ -392,14 +361,6 @@ app.post('/api/sessions/start', async (req, res) => {
 		validationErrors.push(`PLMN MNC must be 2 digits. Current: "${plmnmnc}"`);
 	}
 
-	// AMF validation
-	if (amfIP && !validateIP(amfIP)) {
-		validationErrors.push(`AMF IP must be a valid IP address. Current: "${amfIP}"`);
-	}
-	if (amfPort && (isNaN(amfPort) || amfPort < 1 || amfPort > 65535)) {
-		validationErrors.push(`AMF Port must be between 1-65535. Current: "${amfPort}"`);
-	}
-
 	if (validationErrors.length > 0) {
 		return res.status(400).send(`
 			<div class="status" style="background: #d32f2f; margin: 10px 0;">
@@ -417,8 +378,6 @@ app.post('/api/sessions/start', async (req, res) => {
 	serverState.mnc = mnc;
 	serverState.plmnmcc = plmnmcc;
 	serverState.plmnmnc = plmnmnc;
-	serverState.amfIP = amfIP;
-	serverState.amfPort = amfPort;
 	serverState.sessionAborted = false;
 
 	const baseIMSI = mcc + mnc + msinBase;
@@ -427,9 +386,6 @@ app.post('/api/sessions/start', async (req, res) => {
 	addLog(`Starting MSIN: ${msinBase}`);
 	if (plmnmcc && plmnmnc) {
 		addLog(`PLMN: ${plmnmcc}/${plmnmnc}`);
-	}
-	if (amfIP && amfPort) {
-		addLog(`AMF: ${amfIP}:${amfPort}`);
 	}
 	addLog(`Total UEs to process: ${ueCount}`);
 
@@ -445,7 +401,7 @@ app.post('/api/sessions/start', async (req, res) => {
 		<div id="control-buttons">
 			<button class="start" disabled
 					hx-post="/api/sessions/start" 
-					hx-include="[name='mcc'], [name='mnc'], [name='msinBase'], [name='ueCount'], [name='plmnmcc'], [name='plmnmnc'], [name='amfIP'], [name='amfPort']"
+					hx-include="[name='mcc'], [name='mnc'], [name='msinBase'], [name='ueCount'], [name='plmnmcc'], [name='plmnmnc']"
 					hx-target="#control-buttons" 
 					hx-swap="outerHTML">
 				Start UE Sessions
@@ -479,7 +435,7 @@ app.post('/api/sessions/stop', (req, res) => {
 		<div id="control-buttons">
 			<button class="start"
 					hx-post="/api/sessions/start" 
-					hx-include="[name='mcc'], [name='mnc'], [name='msinBase'], [name='ueCount'], [name='plmnmcc'], [name='plmnmnc'], [name='amfIP'], [name='amfPort']"
+					hx-include="[name='mcc'], [name='mnc'], [name='msinBase'], [name='ueCount'], [name='plmnmcc'], [name='plmnmnc']"
 					hx-target="#control-buttons" 
 					hx-swap="outerHTML">
 				Start UE Sessions
