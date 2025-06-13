@@ -273,6 +273,11 @@ async function runSequentialUEs() {
 			addLog(`❌ UE #${i} failed: ${result.error}`);
 		}
 
+		// Wait for 2 second before starting next UE
+		if (i < serverState.totalUeCount) {
+			await new Promise((resolve) => setTimeout(resolve, 2000));
+		}
+
 		// Increment MSIN for next UE
 		serverState.currentMsin++;
 	}
@@ -431,7 +436,7 @@ app.post('/api/sessions/start', async (req, res) => {
 	// Start sequential UE processing in background
 	setTimeout(() => {
 		runSequentialUEs();
-	}, 100);
+	}, 3000);
 
 	updateProgressDisplay();
 

@@ -7,4 +7,5 @@ dist/
 # Ignore PacketRusher directory (third-party dependency)
 PacketRusher/
 
-
+# Ignore package-lock.json
+package-lock.json
