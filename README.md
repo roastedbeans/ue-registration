@@ -13,37 +13,123 @@ A web-based interface for running sequential UE (User Equipment) registrations w
 
 ## Prerequisites
 
-- Ubuntu/Debian Linux system (the setup script uses `apt` package manager)
-- Root/sudo access (required for kernel module installation)
-- Internet connection (for downloading dependencies and cloning PacketRusher)
+Before installing, ensure you have:
 
-## Setup
+- **Operating System**: Ubuntu/Debian Linux (the setup script uses `apt` package manager)
+- **Root/sudo access**: Required for kernel module installation and system package installation
+- **Internet connection**: Required for downloading dependencies and cloning PacketRusher
+- **Node.js**: Version 14 or higher (check with `node --version`)
+- **npm**: Usually comes with Node.js (check with `npm --version`)
 
-### 1. Install Dependencies and PacketRusher
+### Checking Prerequisites
 
-Run the setup script to install all dependencies and PacketRusher:
+```bash
+# Check Node.js version (should be 14+)
+node --version
+
+# Check npm version
+npm --version
+
+# Check if you have sudo access
+sudo -v
+```
+
+If Node.js is not installed, install it:
+
+```bash
+# On Ubuntu/Debian
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt-get install -y nodejs
+```
+
+## Installation
+
+Follow these steps to install the PacketRusher UE Registration Controller:
+
+### Step 1: Clone or Download the Repository
+
+If you haven't already, navigate to the project directory:
+
+```bash
+cd /path/to/ue-scenario/ue-registration
+```
+
+### Step 2: Make the Setup Script Executable
+
+Ensure the setup script has execute permissions:
+
+```bash
+chmod +x cli.sh
+```
+
+### Step 3: Run the Setup Script
+
+This will install all system dependencies, PacketRusher, and build required components:
 
 ```bash
 sudo ./cli.sh setup-packetrusher
 ```
 
-This script will:
+**What this script does:**
+- Installs system dependencies (build tools, Go 1.24.1, kernel headers, etc.)
+- Clones PacketRusher from GitHub into `./PacketRusher/`
+- Copies the custom `config.yml` from this directory to `PacketRusher/config/`
+- Builds and installs the gtp5g kernel module
+- Compiles the PacketRusher binary
 
-- Install system dependencies (build tools, Go 1.24.1, kernel headers, etc.)
-- Clone PacketRusher from GitHub into `./PacketRusher/`
-- Copy the custom `config.yml` from this directory to `PacketRusher/config/`
-- Build and install the gtp5g kernel module
-- Compile the PacketRusher binary
+**Important Notes:**
+- The setup process may take 10-20 minutes depending on your system
+- You may be prompted for your sudo password
+- After completion, you may need to log out and log back in (or run `source ~/.profile`) for environment variables to take effect
 
-**Note**: After running the setup script, you may need to log out and log back in (or run `source ~/.profile`) to use Go and PacketRusher commands.
-
-### 2. Install Node.js Dependencies
+### Step 4: Install Node.js Dependencies
 
 Install the required Node.js packages:
 
 ```bash
 npm install
 ```
+
+This will install:
+- `express` - Web server framework
+- `ws` - WebSocket support
+- `js-yaml` - YAML config file parsing
+- `cors` - CORS middleware
+- `nodemon` - Development auto-reload (dev dependency)
+
+### Step 5: Verify Installation
+
+Verify that everything is installed correctly:
+
+```bash
+# Check if PacketRusher binary exists and is executable
+ls -l ./PacketRusher/packetrusher
+
+# Check if config file exists
+ls -l ./PacketRusher/config/config.yml
+
+# Test PacketRusher (should show help or version)
+./PacketRusher/packetrusher --help
+
+# Verify Node.js dependencies
+npm list --depth=0
+```
+
+### Step 6: (Optional) Reload Environment Variables
+
+If Go or PacketRusher commands are not found, reload your shell environment:
+
+```bash
+# Option 1: Source your profile
+source ~/.profile
+
+# Option 2: Start a new shell session
+# Option 3: Log out and log back in
+```
+
+### Installation Complete!
+
+Once all steps are completed, you're ready to use the application. Proceed to the [Usage](#usage) section to learn how to start the web interface.
 
 ## Configuration
 
